@@ -221,7 +221,26 @@ function agregarMensaje(texto, tipo) {
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
-
+// 🚀 Iniciar Jarvis (requiere interacción del usuario)
+function iniciarJarvis() {
+  // Ocultar overlay
+  const overlay = document.getElementById('start-overlay');
+  if (overlay) {
+    overlay.style.opacity = '0';
+    setTimeout(() => overlay.remove(), 500);
+  }
+  
+  // Saludo inicial CON VOZ
+  const saludo = "Hola Niurka. Soy Jarvis, tu asistente personal. Estoy conectado a tu WhatsApp y listo para ayudarte. ¿En qué puedo ayudarte hoy?";
+  
+  // Mostrar en chat
+  agregarMensaje('🤖 ' + saludo, 'jarvis');
+  
+  // Decirlo en voz alta (ahora sí funcionará porque hubo un clic)
+  setTimeout(() => {
+    speakText(saludo);
+  }, 500);
+}
 function mostrarNotificacion(texto) {
   const notifDiv = document.getElementById('notificaciones');
   const div = document.createElement('div');
