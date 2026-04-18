@@ -1,30 +1,33 @@
 import { model } from '../config/gemini.js';
 
+// Agrega esta función al inicio de src/services/ai.js
 export async function generarRespuestaSugerida(mensaje, contexto = '') {
-  const prompt = `Eres un asistente inteligente llamado Jarvis. 
-  Contexto: ${contexto}
-  
-  Mensaje recibido: "${mensaje}"
-  
-  Responde ÚNICAMENTE en JSON:
-  {
-    "respuesta": "tu respuesta natural y útil",
-    "accion_sugerida": "qué debería hacer el usuario",
-    "prioridad": "alta|media|baja"
-  }`;
-
   try {
+    const prompt = `Eres Jarvis, asistente de Niurka. Responde en JSON:
+{
+  "respuesta": "tu respuesta útil y amigable",
+  "accion_sugerida": "qué hacer",
+  "prioridad": "alta|media|baja"
+}
+Mensaje: "${mensaje}"
+Contexto: ${contexto}`;
+
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const texto = response.text();
-    
-    // Limpiar JSON
     const inicio = texto.indexOf('{');
     const fin = texto.lastIndexOf('}') + 1;
     return JSON.parse(texto.substring(inicio, fin));
+    
   } catch (error) {
-    console.error("❌ Error en IA:", error.message);
-    return null;
+    // 🔄 FALLBACK: Respuesta básica si la API falla
+    console.warn("⚠️ IA no disponible, usando respuesta fallback");
+    
+    return {
+      respuesta: "🤖 Jarvis está en modo básico. La IA temporalmente no está disponible, pero sigo monitoreando tus grupos de WhatsApp.",
+      accion_sugerida: "Intenta de nuevo en unos minutos o revisa la consola para detalles.",
+      prioridad: "media"
+    };
   }
 }
 

@@ -1,2 +1,24 @@
+# === Jarvis Project - Ignorar archivos de sesión ===
+# Sesión de WhatsApp (se regenera automáticamente)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Archivos de caché de Node
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Variables de entorno (NUNCA subir a GitHub)
 .env
+.env.local
+.env*.local
+
+# Caché de sistema
+.DS_Store
+Thumbs.db
+
+# Logs de desarrollo
+logs/
+*.log
+tmp/
