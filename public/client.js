@@ -10,87 +10,98 @@ let speechSynthesis = window.speechSynthesis;
 let isListening = false;
 let voiceEnabled = true;
 
-// 🎤 Inicializar reconocimiento de voz MEJORADO
+// 🎤 Inicializar reconocimiento de voz - VERSIÓN RESISTENTE
 function initVoiceRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   
-  if (SpeechRecognition) {
-    recognition = new SpeechRecognition();
-    recognition.lang = 'es-ES';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
+  if (!SpeechRecognition) {
+    console.warn('⚠️ Reconocimiento de voz no disponible');
+    return;
+  }
 
-    recognition.onstart = () => {
-      isListening = true;
-      if (voiceBtn) {
-        voiceBtn.classList.add('listening');
-        voiceBtn.innerHTML = '🔴';
-      }
-      statusDiv.textContent = '🎤 Escuchando...';
-      statusDiv.style.background = 'rgba(244, 67, 54, 0.7)';
-    };
+  recognition = new SpeechRecognition();
+  recognition.lang = 'es-ES';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
 
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
+  // 🔁 Reintentos automáticos
+  let retryCount = 0;
+  const MAX_RETRIES = 3;
+
+  recognition.onstart = () => {
+    isListening = true;
+    if (voiceBtn) {
+      voiceBtn.classList.add('listening');
+      voiceBtn.innerHTML = '🔴';
+    }
+    statusDiv.textContent = '🎤 Escuchando...';
+  };
+
+  recognition.onresult = (event) => {
+    retryCount = 0; // Resetear reintentos al tener éxito
+    const transcript = event.results[0][0].transcript;
+    
+    if (transcript.trim()) {
       messageInput.value = transcript;
       agregarMensaje(`🎤 Dijiste: "${transcript}"`, 'user');
       
-      // Auto-enviar después de 1 segundo (para que veas lo que captó)
-      setTimeout(() => {
-        if (transcript.trim()) {
-          enviarMensaje();
-        }
-      }, 1000);
-    };
+      // Auto-enviar después de 800ms
+      setTimeout(() => enviarMensaje(), 800);
+    }
+  };
 
-    recognition.onerror = (event) => {
-      console.error('❌ Error de voz:', event.error);
-      isListening = false;
-      
-      if (voiceBtn) {
-        voiceBtn.classList.remove('listening');
-        voiceBtn.innerHTML = '🎤';
-      }
-      
-      // Manejo específico de errores
-      if (event.error === 'network') {
-        agregarMensaje('⚠️ Error de red. Verifica tu conexión a internet.', 'jarvis');
-      } else if (event.error === 'no-speech') {
-        agregarMensaje('🤔 No escuché nada. Intenta de nuevo.', 'jarvis');
-      } else if (event.error === 'audio-capture') {
-        agregarMensaje('🎤 Verifica que el micrófono esté conectado.', 'jarvis');
-      } else if (event.error === 'not-allowed') {
-        agregarMensaje('⛔ Permiso de micrófono denegado.', 'jarvis');
-      } else {
-        agregarMensaje(`⚠️ Error: ${event.error}. Intenta de nuevo.`, 'jarvis');
-      }
-      
-      // Reintentar automáticamente después de 2 segundos
-      setTimeout(() => {
-        if (isListening) {
+  recognition.onerror = (event) => {
+    console.error('❌ Error de voz:', event.error);
+    isListening = false;
+    
+    // Resetear UI
+    if (voiceBtn) {
+      voiceBtn.classList.remove('listening');
+      voiceBtn.innerHTML = '🎤';
+    }
+    statusDiv.textContent = '✅ WhatsApp + Centro de Control';
+
+    // Manejo inteligente de errores
+    if (event.error === 'network') {
+      retryCount++;
+      if (retryCount <= MAX_RETRIES) {
+        console.log(`🔄 Reintentando (${retryCount}/${MAX_RETRIES})...`);
+        agregarMensaje(`⏳ Intentando de nuevo... (${retryCount}/${MAX_RETRIES})`, 'jarvis');
+        
+        // Esperar y reintentar
+        setTimeout(() => {
           try {
             recognition.start();
           } catch (e) {
-            console.log('Reconocimiento ya está activo');
+            console.log('No se pudo reintentar');
           }
-        }
-      }, 2000);
-    };
+        }, 1500 * retryCount); // Espera progresiva
+      } else {
+        agregarMensaje('❌ Error de red persistente. Prueba en Edge o verifica tu internet.', 'jarvis');
+      }
+      
+    } else if (event.error === 'no-speech') {
+      agregarMensaje('🤔 No escuché nada. Habla más fuerte o acerca el micrófono.', 'jarvis');
+    } else if (event.error === 'audio-capture') {
+      agregarMensaje('🎤 Verifica que el micrófono esté conectado y permitido.', 'jarvis');
+    } else if (event.error === 'not-allowed') {
+      agregarMensaje('⛔ Permiso de micrófono denegado. Haz clic en 🔒 y permite el micrófono.', 'jarvis');
+    } else {
+      agregarMensaje(`⚠️ Error: ${event.error}`, 'jarvis');
+    }
+  };
 
-    recognition.onend = () => {
-      isListening = false;
+  recognition.onend = () => {
+    // Solo resetear si no está en modo escucha activa
+    if (!isListening) {
       if (voiceBtn) {
         voiceBtn.classList.remove('listening');
         voiceBtn.innerHTML = '🎤';
       }
       statusDiv.textContent = '✅ WhatsApp + Centro de Control';
-      statusDiv.style.background = 'rgba(76, 175, 80, 0.8)';
-    };
-
-  } else {
-    console.warn('⚠️ Reconocimiento de voz no disponible');
-  }
+    }
+  };
 }
 
 // 🔊 Función para que Jarvis hable
