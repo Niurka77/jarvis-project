@@ -5,6 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JARVIS - Centro de Control</title>
   <link rel="stylesheet" href="style.css">
+  <style>
+    /* Estilo opcional para el botón de voz */
+    .voice-btn {
+      background: #2196F3;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1.2em;
+      margin-left: 8px;
+      transition: background 0.2s;
+    }
+    .voice-btn:hover { background: #1976D2; }
+    .voice-btn.listening { background: #f44336; animation: pulse 1.5s infinite; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7); }
+      70% { box-shadow: 0 0 0 10px rgba(244, 67, 54, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0); }
+    }
+  </style>
 </head>
 <body>
   <div class="container">
@@ -18,7 +39,10 @@
       <div id="chat-messages" class="messages"></div>
       
       <div class="input-area">
-        <input type="text" id="message-input" placeholder="Escribe tu mensaje a Jarvis..." />
+        <button id="voice-btn" class="voice-btn" onclick="toggleListening()" title="Ctrl+M para activar">
+          🎤
+        </button>
+        <input type="text" id="message-input" placeholder="Escribe o habla con Jarvis..." />
         <button onclick="enviarMensaje()">Enviar</button>
       </div>
     </div>
