@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "main": "index.js",
   "type": "module",
-  "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
-  },
+"scripts": {
+  "start": "node src/index.js",
+  "voice": "python src/voice-service.py",
+  "dev": "concurrently \"npm start\" \"npm run voice\""
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -23,5 +24,8 @@
     "websocket": "^1.0.35",
     "whatsapp-web.js": "^1.34.6",
     "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }

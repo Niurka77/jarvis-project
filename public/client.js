@@ -1,38 +1,25 @@
 // 🔊 Variables de voz
-let mediaRecorder = null;
+let audioContext = null;
+let mediaStream = null;
+let audioProcessor = null;
+let sourceNode = null;
 let isListening = false;
 let voiceEnabled = true;
 const SAMPLE_RATE = 16000;
 
-// Referencias al DOM (ajusta según tus IDs reales)
+// Referencias al DOM
 const messageInput = document.getElementById('message-input');
 const voiceBtn = document.getElementById('voice-btn');
 const statusDiv = document.getElementById('status-div');
 
-// 🔊 Función para que Jarvis hable
-function speakText(text) {
-  if (!voiceEnabled || !window.speechSynthesis) return;
-  
-  window.speechSynthesis.cancel();
-  
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'es-ES';
-  utterance.rate = 0.95;
-  utterance.pitch = 1;
-  
-  if (!document.hidden) {
-    window.speechSynthesis.speak(utterance);
-  }
-}
-
-// ✅ CONEXIÓN SOCKET.IO (ya deberías tenerla, pero la incluyo por si acaso)
+// Socket.IO
 const socket = io();
 
 socket.on('connect', () => {
   console.log('✅ Conectado al servidor Jarvis');
 });
 
-// ✅ ESCUCHAR RESULTADOS DE VOZ DEL SERVIDOR
+// Escuchar resultados de voz
 socket.on('voice:resultado', (data) => {
   console.log(`🎯 Reconocido: "${data.text}"`);
   
@@ -42,7 +29,6 @@ socket.on('voice:resultado', (data) => {
   
   agregarMensaje(`🎤 Dijiste: "${data.text}"`, 'user');
   
-  // Enviar automáticamente después de 500ms
   setTimeout(() => {
     if (messageInput && messageInput.value.trim()) {
       enviarMensaje();
@@ -50,10 +36,10 @@ socket.on('voice:resultado', (data) => {
   }, 500);
 });
 
-// 🎤 Iniciar grabación de voz
+// 🎤 Iniciar grabación de voz CON AUDIO CONVERSION
 async function startListening() {
   if (!voiceEnabled) {
-    agregarMensaje('🔇 La voz está silenciada. Presiona Ctrl+Shift+M para activar.', 'jarvis');
+    agregarMensaje('🔇 La voz está silenciada.', 'jarvis');
     return;
   }
   
@@ -63,7 +49,14 @@ async function startListening() {
   }
   
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ 
+    // Crear AudioContext
+    audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+    
+    // Cargar el AudioWorklet
+    await audioContext.audioWorklet.addModule('audio-processor.js');
+    
+    // Obtener micrófono
+    mediaStream = await navigator.mediaDevices.getUserMedia({ 
       audio: { 
         channelCount: 1,
         sampleRate: SAMPLE_RATE,
@@ -72,21 +65,30 @@ async function startListening() {
       } 
     });
     
-    // Crear MediaRecorder
-    mediaRecorder = new MediaRecorder(stream, { 
-      mimeType: 'audio/webm;codecs=opus' 
-    });
+    // Crear nodos
+    sourceNode = audioContext.createMediaStreamSource(mediaStream);
+    audioProcessor = new AudioWorkletNode(audioContext, 'audio-processor');
     
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        // ✅ ENVIAR AUDIO AL SERVIDOR VÍA SOCKET.IO
-        event.data.arrayBuffer().then(buffer => {
-          socket.emit('voice:audio', buffer);
-        });
+    // Conectar nodos
+    sourceNode.connect(audioProcessor);
+    
+    // Escuchar datos de audio
+    audioProcessor.port.onmessage = (event) => {
+      if (socket.connected) {
+        // Convertir Float32Array a Int16Array (PCM)
+        const floatData = new Float32Array(event.data);
+        const int16Data = new Int16Array(floatData.length);
+        
+        for (let i = 0; i < floatData.length; i++) {
+          const s = Math.max(-1, Math.min(1, floatData[i]));
+          int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        
+        // Enviar al servidor
+        socket.emit('voice:audio', int16Data.buffer);
       }
     };
     
-    mediaRecorder.start(200); // Enviar chunks cada 200ms
     isListening = true;
     
     // Actualizar UI
@@ -101,15 +103,30 @@ async function startListening() {
     
   } catch (err) {
     console.error('❌ Error al acceder al micrófono:', err);
-    agregarMensaje('⛔ No pude acceder al micrófono. Verifica los permisos.', 'jarvis');
+    agregarMensaje('⛔ No pude acceder al micrófono.', 'jarvis');
   }
 }
 
 // ⏹️ Detener grabación
 function stopListening() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+  if (audioProcessor) {
+    audioProcessor.port.close();
+    audioProcessor = null;
+  }
+  
+  if (sourceNode) {
+    sourceNode.disconnect();
+    sourceNode = null;
+  }
+  
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop());
+    mediaStream = null;
+  }
+  
+  if (audioContext) {
+    audioContext.close();
+    audioContext = null;
   }
   
   isListening = false;
@@ -124,7 +141,7 @@ function stopListening() {
   }
 }
 
-// 🔘 Control de voz (toggle)
+// 🔘 Control de voz
 function toggleListening() {
   if (isListening) {
     stopListening();
@@ -133,7 +150,7 @@ function toggleListening() {
   }
 }
 
-// Función para agregar mensajes al chat
+// Función para agregar mensajes
 function agregarMensaje(texto, tipo) {
   const chatMessages = document.getElementById('chat-messages');
   if (!chatMessages) return;
@@ -141,7 +158,10 @@ function agregarMensaje(texto, tipo) {
   const mensajeDiv = document.createElement('div');
   mensajeDiv.classList.add('mensaje', tipo);
   
-  const hora = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  const hora = new Date().toLocaleTimeString('es-ES', { 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  });
   
   mensajeDiv.innerHTML = `
     <div class="mensaje-hora">${hora}</div>
@@ -154,7 +174,6 @@ function agregarMensaje(texto, tipo) {
 
 // Función para enviar mensajes
 function enviarMensaje() {
-  const messageInput = document.getElementById('message-input');
   if (!messageInput || !messageInput.value.trim()) return;
   
   const mensaje = messageInput.value.trim();
@@ -170,49 +189,53 @@ function enviarMensaje() {
   // Limpiar input
   messageInput.value = '';
 }
-// ✅ Función para el botón "INICIAR JARVIS"
-async function iniciarJarvis() {
-  console.log(' Iniciando Jarvis...');
+
+// Función para que Jarvis hable
+function speakText(text) {
+  if (!voiceEnabled || !window.speechSynthesis) return;
   
-  // Solicitar permiso del micrófono
+  window.speechSynthesis.cancel();
+  
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'es-ES';
+  utterance.rate = 0.95;
+  utterance.pitch = 1;
+  
+  if (!document.hidden) {
+    window.speechSynthesis.speak(utterance);
+  }
+}
+
+// Función INICIAR JARVIS
+async function iniciarJarvis() {
+  console.log('🚀 Iniciando Jarvis...');
+  
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach(track => track.stop()); // Cerrar el stream después de obtener permiso
+    stream.getTracks().forEach(track => track.stop());
     
-    // Habilitar voz
     voiceEnabled = true;
     
-    // Ocultar el overlay
     const overlay = document.getElementById('start-overlay');
     if (overlay) {
       overlay.style.display = 'none';
     }
     
-    // Mensaje de bienvenida
     agregarMensaje('🤖 ¡Hola Niurka! Jarvis está listo. Presiona el micrófono 🎤 o Ctrl+M para hablar.', 'jarvis');
-    
-    // Decir algo con voz
     speakText('Bienvenida Niurka. Jarvis está listo para ayudarte.');
     
   } catch (err) {
     console.error('❌ Error al acceder al micrófono:', err);
-    alert('⛔ Necesito acceso al micrófono para funcionar. Por favor permite el acceso.');
+    alert('⛔ Necesito acceso al micrófono para funcionar.');
   }
 }
 
-// Hacer la función global (para que el HTML la pueda llamar)
+// Hacer funciones globales
 window.iniciarJarvis = iniciarJarvis;
 window.toggleListening = toggleListening;
 window.enviarMensaje = enviarMensaje;
 window.agregarMensaje = agregarMensaje;
 window.speakText = speakText;
-function enviarMensaje() {
-  // Tu implementación actual
-  if (messageInput && messageInput.value.trim()) {
-    socket.emit('jarvis:mensaje', { mensaje: messageInput.value });
-    messageInput.value = '';
-  }
-}
 
 // Atajo de teclado Ctrl+M
 document.addEventListener('keydown', (e) => {
