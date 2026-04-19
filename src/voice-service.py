@@ -15,14 +15,14 @@ print(f"🔍 Cargando modelo desde: {MODEL_PATH}")
 if not os.path.exists(MODEL_PATH):
     print(f"❌ Modelo no encontrado en {MODEL_PATH}")
     print("💡 Descarga el modelo desde: https://alphacephei.com/vosk/models")
-    print("💡 Descomprímelo en: src/vosk-models/vosk-model-small-es-0.22")
+    print("💡 Descomprímelo en: src/vosk-models/vosk-model-small-es-0.42")
     sys.exit(1)
 
 print("⏳ Cargando modelo Vosk (esto puede tardar unos segundos)...")
 model = Model(MODEL_PATH)
 print("✅ Modelo Vosk cargado correctamente")
 
-async def recognize_audio(websocket, path):
+async def recognize_audio(websocket):
     """Recibe audio en tiempo real y devuelve texto reconocido"""
     rec = KaldiRecognizer(model, SAMPLE_RATE)
     
@@ -49,10 +49,10 @@ async def recognize_audio(websocket, path):
                         print(f"🗣️ Reconocido: '{text}'")
                         await websocket.send(json.dumps({"text": text, "final": True}))
                 else:
-                    # Resultados parciales (opcional, para mostrar mientras habla)
+                    # Resultados parciales (opcional)
                     partial = json.loads(rec.PartialResult())
                     if partial.get("partial"):
-                        # No enviamos parciales para no saturar, pero podrías hacerlo
+                        # No enviamos parciales para no saturar
                         pass
     
     except websockets.exceptions.ConnectionClosed:
@@ -64,10 +64,10 @@ async def recognize_audio(websocket, path):
 
 async def main():
     # Servidor WebSocket en puerto 5001
-    server = await websockets.serve(recognize_audio, "localhost", 5001)
-    print("🚀 Servicio de voz Vosk corriendo en ws://localhost:5001")
-    print("💡 Presiona Ctrl+C para detener")
-    await server.wait_closed()
+    async with websockets.serve(recognize_audio, "localhost", 5001):
+        print("🚀 Servicio de voz Vosk corriendo en ws://localhost:5001")
+        print("💡 Presiona Ctrl+C para detener")
+        await asyncio.Future()  # Ejecutar para siempre
 
 if __name__ == "__main__":
     try:
