@@ -7,17 +7,74 @@ import { crearRecordatorio } from './services/scheduler.js';
 import { supabase } from './config/supabase.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { WebSocket } from 'ws'; // ✅ Import corregido (arriba del todo)
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
 
 // Servir archivos estáticos
 app.use(express.static(path.join(__dirname, '../public')));
 app.use(express.json());
+
+// === VARIABLES DE VOSK ===
+let voiceSocket = null;
+const VOSK_WS_URL = 'ws://localhost:5001';
+
+// === FUNCIÓN PARA CONECTAR AL SERVICIO DE VOZ ===
+function connectToVoiceService() {
+  try {
+    voiceSocket = new WebSocket(VOSK_WS_URL);
+    
+    voiceSocket.on('open', () => {
+      console.log('✅ Conectado al servicio de voz Vosk');
+      voiceSocket.send(JSON.stringify({ type: 'config', sampleRate: 16000 }));
+    });
+    
+    voiceSocket.on('message', (data) => {
+      try {
+        const result = JSON.parse(data.toString());
+        if (result.final && result.text) {
+          console.log(`🎯 Voz reconocida: "${result.text}"`);
+          // ✅ EMITIR AL FRONTEND el texto reconocido
+          io.emit('voice:resultado', { text: result.text });
+        }
+      } catch (e) {
+        console.error('❌ Error parseando respuesta de Vosk:', e);
+      }
+    });
+    
+    voiceSocket.on('error', (err) => {
+      console.error('❌ Error en conexión Vosk:', err.message);
+      console.log('💡 Asegúrate de ejecutar: python src/voice-service.py');
+    });
+    
+    voiceSocket.on('close', () => {
+      console.log('🔌 Desconectado de Vosk. Reconectando en 5s...');
+      setTimeout(connectToVoiceService, 5000);
+    });
+    
+  } catch (err) {
+    console.error('❌ No se pudo conectar al servicio de voz:', err);
+  }
+}
+
+// ✅ FUNCIÓN PARA RECIBIR AUDIO DEL FRONTEND Y ENVIARLO A VOSK
+export function sendAudioToVosk(audioBuffer) {
+  if (voiceSocket && voiceSocket.readyState === WebSocket.OPEN) {
+    voiceSocket.send(audioBuffer);
+    return true;
+  }
+  return false;
+}
 
 // Socket.io
 io.on('connection', (socket) => {
@@ -42,6 +99,11 @@ io.on('connection', (socket) => {
     socket.emit('jarvis:respuesta', respuesta);
   });
   
+  // ✅ RECIBIR AUDIO DEL FRONTEND
+  socket.on('voice:audio', (audioBuffer) => {
+    sendAudioToVosk(audioBuffer);
+  });
+  
   // Crear recordatorio
   socket.on('jarvis:recordatorio', async (data) => {
     const { hora, mensaje } = data;
@@ -55,12 +117,16 @@ io.on('connection', (socket) => {
   });
 });
 
+// ✅ CONECTAR AL SERVICIO DE VOZ AL INICIAR
+connectToVoiceService();
+
 // Inicializar WhatsApp
 inicializarWhatsApp(io);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Centro de Control Jarvis corriendo en http://localhost:${PORT}`);
+  console.log(`🎤 Servicio de voz: ${voiceSocket ? 'Conectando...' : 'Iniciando...'}`);
 });
 
 export default app;
