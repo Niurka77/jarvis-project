@@ -7,7 +7,7 @@ import sys
 from vosk import Model, KaldiRecognizer
 
 # Configuración
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "vosk-models", "vosk-model-small-es-0.22")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "vosk-models", "vosk-model-small-es-0.42")
 SAMPLE_RATE = 16000
 
 print(f"🔍 Cargando modelo desde: {MODEL_PATH}")

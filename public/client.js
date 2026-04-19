@@ -133,12 +133,79 @@ function toggleListening() {
   }
 }
 
-// ✅ Funciones auxiliares (asegúrate de tenerlas en tu archivo)
+// Función para agregar mensajes al chat
 function agregarMensaje(texto, tipo) {
-  // Tu implementación actual
-  console.log(`[${tipo}]: ${texto}`);
+  const chatMessages = document.getElementById('chat-messages');
+  if (!chatMessages) return;
+  
+  const mensajeDiv = document.createElement('div');
+  mensajeDiv.classList.add('mensaje', tipo);
+  
+  const hora = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  
+  mensajeDiv.innerHTML = `
+    <div class="mensaje-hora">${hora}</div>
+    <div class="mensaje-texto">${texto}</div>
+  `;
+  
+  chatMessages.appendChild(mensajeDiv);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
+// Función para enviar mensajes
+function enviarMensaje() {
+  const messageInput = document.getElementById('message-input');
+  if (!messageInput || !messageInput.value.trim()) return;
+  
+  const mensaje = messageInput.value.trim();
+  
+  // Agregar al chat
+  agregarMensaje(mensaje, 'user');
+  
+  // Enviar al servidor
+  if (typeof socket !== 'undefined') {
+    socket.emit('jarvis:mensaje', { mensaje });
+  }
+  
+  // Limpiar input
+  messageInput.value = '';
+}
+// ✅ Función para el botón "INICIAR JARVIS"
+async function iniciarJarvis() {
+  console.log(' Iniciando Jarvis...');
+  
+  // Solicitar permiso del micrófono
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(track => track.stop()); // Cerrar el stream después de obtener permiso
+    
+    // Habilitar voz
+    voiceEnabled = true;
+    
+    // Ocultar el overlay
+    const overlay = document.getElementById('start-overlay');
+    if (overlay) {
+      overlay.style.display = 'none';
+    }
+    
+    // Mensaje de bienvenida
+    agregarMensaje('🤖 ¡Hola Niurka! Jarvis está listo. Presiona el micrófono 🎤 o Ctrl+M para hablar.', 'jarvis');
+    
+    // Decir algo con voz
+    speakText('Bienvenida Niurka. Jarvis está listo para ayudarte.');
+    
+  } catch (err) {
+    console.error('❌ Error al acceder al micrófono:', err);
+    alert('⛔ Necesito acceso al micrófono para funcionar. Por favor permite el acceso.');
+  }
+}
+
+// Hacer la función global (para que el HTML la pueda llamar)
+window.iniciarJarvis = iniciarJarvis;
+window.toggleListening = toggleListening;
+window.enviarMensaje = enviarMensaje;
+window.agregarMensaje = agregarMensaje;
+window.speakText = speakText;
 function enviarMensaje() {
   // Tu implementación actual
   if (messageInput && messageInput.value.trim()) {
