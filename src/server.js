@@ -1,3 +1,7 @@
+// ✅ AGREGA ESTO EN LA LÍNEA 1 de src/server.js
+import 'dotenv/config';
+
+// Luego el resto de imports...
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';

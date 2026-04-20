@@ -1,12 +1,7 @@
 // src/index.js
-// PRIMERO: cargar variables de entorno
-import dotenv from 'dotenv';
-dotenv.config();
+import 'dotenv/config';  // ← PRIMERO cargar variables
+import app from './server.js';
 
-// SEGUNDO: ahora sí importar el servidor
-import('./server.js').then(() => {
-  console.log('🚀 Jarvis iniciado correctamente');
-}).catch(err => {
-  console.error('❌ Error al iniciar:', err);
-  process.exit(1);
-});
+const PORT = process.env.PORT || 3000;
+console.log('✅ Variables de entorno cargadas');
+console.log('🔑 GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? 'Configurada ✓' : '❌ NO configurada');
