@@ -50,13 +50,21 @@ export function inicializarWhatsApp(socketIO) {
     }
   });
 
+  client.on('disconnected', (reason) => {
+    console.log('🔌 WhatsApp desconectado:', reason);
+    if (io) io.emit('whatsapp:disconnected', { reason });
+  });
+
   client.initialize();
   return client;
 }
-// Agrega esta función auxiliar:
+
+// ✅ Función para verificar si WhatsApp está listo
 export function isWhatsAppReady() {
-  return client?.info?.wid !== undefined;
+  return client?.info?.wid !== undefined && client?.isConnected?.();
 }
+
+// ✅ Función para obtener el cliente
 export function getClient() {
   return client;
 }

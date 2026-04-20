@@ -1,7 +1,20 @@
 import { model } from '../config/gemini.js';
 
+// === 🗄️ CACHE PARA REDUCIR LLAMADAS A GEMINI (evita error 429) ===
+const geminiCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutos en milisegundos
+
 export async function generarRespuestaSugerida(mensaje, contexto = '') {
   try {
+    // 🔍 Verificar caché primero
+    const cacheKey = `${mensaje.toLowerCase().trim()}|${contexto}`;
+    const cached = geminiCache.get(cacheKey);
+    
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      console.log('📦 Respuesta desde caché Gemini');
+      return cached.data;
+    }
+    
     console.log('🔄 Intentando llamar a Gemini API...');
     console.log('📝 Mensaje:', mensaje);
     
@@ -22,7 +35,21 @@ Contexto: ${contexto}`;
     
     const inicio = texto.indexOf('{');
     const fin = texto.lastIndexOf('}') + 1;
-    return JSON.parse(texto.substring(inicio, fin));
+    const resultado = JSON.parse(texto.substring(inicio, fin));
+    
+    // 💾 Guardar en caché
+    geminiCache.set(cacheKey, {
+      data: resultado,
+      timestamp: Date.now()
+    });
+    
+    // 🧹 Limpiar caché antiguo (mantener máximo 50 entradas)
+    if (geminiCache.size > 50) {
+      const oldestKey = geminiCache.keys().next().value;
+      geminiCache.delete(oldestKey);
+    }
+    
+    return resultado;
     
   } catch (error) {
     // 🔴 LOG DETALLADO DEL ERROR
@@ -30,7 +57,6 @@ Contexto: ${contexto}`;
     console.error('📛 Message:', error.message);
     console.error('📛 Status:', error.status);
     console.error('📛 Stack:', error.stack);
-    console.error('📛 Full error:', JSON.stringify(error, null, 2));
     
     console.warn("⚠️ IA no disponible, usando respuesta fallback");
     
@@ -41,24 +67,6 @@ Contexto: ${contexto}`;
     };
   }
 }
-// Al inicio del archivo:
-const geminiCache = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
-
-// Dentro de generarRespuestaSugerida, antes de llamar a Gemini:
-const cacheKey = mensaje.toLowerCase().trim();
-const cached = geminiCache.get(cacheKey);
-if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-  console.log('📦 Respuesta desde caché');
-  return cached.data;
-}
-
-// Después de obtener respuesta exitosa de Gemini:
-geminiCache.set(cacheKey, {
-  data: resultado,
-  timestamp: Date.now()
-});
-
 
 export async function analizarMensajeGrupo(mensaje) {
   const prompt = `Analiza este mensaje de WhatsApp y decide si es importante para Niurka.

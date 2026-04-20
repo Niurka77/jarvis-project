@@ -5,7 +5,7 @@ import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { inicializarWhatsApp } from './services/whatsapp.js';
+import { inicializarWhatsApp, getClient, isWhatsAppReady } from './services/whatsapp.js';
 import { generarRespuestaSugerida } from './services/ai.js';
 import { crearRecordatorio } from './services/scheduler.js';
 import { supabase } from './config/supabase.js';
@@ -144,7 +144,7 @@ io.on('connection', (socket) => {
   // === CREAR RECORDATORIO ===
   socket.on('jarvis:recordatorio', async (data) => {
     const { hora, mensaje } = data;
-    const cliente = await import('./services/whatsapp.js').then(m => m.getClient());
+    const cliente = getClient();
     
     crearRecordatorio({ hora, mensaje, cliente });
     
@@ -152,22 +152,25 @@ io.on('connection', (socket) => {
       mensaje: `✅ Recordatorio creado para las ${hora}`
     });
   });
-  const { getClient, isWhatsAppReady } = await import('./services/whatsapp.js');
-if (!isWhatsAppReady()) {
-  respuesta = '⏳ WhatsApp aún se está inicializando...';
-}
-  // === ✅ CONSULTAS WHATSAPP (DENTRO DEL BLOQUE CORRECTO) ===
+  
+  // === ✅ CONSULTAS WHATSAPP ===
   socket.on('whatsapp:consulta', async (data) => {
     const { comando } = data;
     let respuesta = '';
     let hablar = true;
     
     try {
-      const { getClient } = await import('./services/whatsapp.js');
-      const client = await getClient();
+      // Verificar si WhatsApp está listo
+      if (!isWhatsAppReady()) {
+        respuesta = '⏳ WhatsApp aún se está inicializando... Escanea el QR en la terminal si es necesario.';
+        socket.emit('whatsapp:respuesta', { mensaje: respuesta, hablar });
+        return;
+      }
       
-     if (!client?.info?.wid) {
-  respuesta = '❌ WhatsApp no está conectado. Escanea el QR si es necesario.';
+      const client = getClient();
+      
+      if (!client?.info?.wid) {
+        respuesta = '❌ WhatsApp no está conectado. Escanea el QR si es necesario.';
       } else {
         switch(comando.toLowerCase()) {
           case 'estado':
@@ -211,9 +214,43 @@ if (!isWhatsAppReady()) {
             respuesta = `📱 Tu WhatsApp: ${info?.pushname || 'Usuario'}\nNúmero: ${info?.wid?.user || 'No disponible'}`;
             break;
             
-          default:
-            respuesta = '❓ Comandos: "estado WhatsApp", "mis grupos", "últimos chats", "mi número"';
+          // === 🆕 COMANDO PARA ENVIAR MENSAJES ===
+          case 'enviar mensaje':
+          case 'mandar whatsapp':
+          case 'escribir a':
+            respuesta = '📝 Para enviar: "Jarvis, enviar a [nombre/número]: [tu mensaje]"';
             hablar = false;
+            break;
+            
+          default:
+            // Detectar si es comando de envío: "enviar a [contacto]: [mensaje]"
+            const matchEnvio = comando.match(/(?:enviar|mandar|escribir)\s+(?:a\s+)?([^:]+):\s*(.+)/i);
+            if (matchEnvio) {
+              const [, contacto, texto] = matchEnvio;
+              try {
+                const client = getClient();
+                const chats = await client.getChats();
+                // Buscar contacto por nombre o número
+                const destino = chats.find(c => 
+                  (c.name?.toLowerCase().includes(contacto.trim().toLowerCase())) || 
+                  (c.pushname?.toLowerCase().includes(contacto.trim().toLowerCase())) ||
+                  c.id._serialized.includes(contacto.trim())
+                );
+                
+                if (destino) {
+                  await destino.sendMessage(texto.trim());
+                  respuesta = `✅ Mensaje enviado a ${destino.name || destino.pushname || contacto}`;
+                } else {
+                  respuesta = `❌ No encontré "${contacto}" en tus chats. Prueba con el número completo.`;
+                }
+              } catch (err) {
+                console.error('❌ Error enviando mensaje:', err);
+                respuesta = '⚠️ Error al enviar. Verifica que el contacto exista.';
+              }
+            } else {
+              respuesta = '❓ Comandos: "estado", "mis grupos", "últimos chats", "mi número", "enviar a [contacto]: [mensaje]"';
+              hablar = false;
+            }
         }
       }
     } catch (err) {
