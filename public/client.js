@@ -214,12 +214,12 @@ function speakText(text) {
   utterance.lang = 'es-ES';
   utterance.rate = 0.95;
   utterance.pitch = 1;
-  
+   
   if (!document.hidden) {
     window.speechSynthesis.speak(utterance);
   }
 }
-// Cuando Jarvis vaya a hablar:
+// Cuando Jarvis  te vaya a hablar:
 function hablarRespuesta(respuesta) {
   // 🔴 PAUSAR el reconocimiento mientras habla
   if (recognition) {
