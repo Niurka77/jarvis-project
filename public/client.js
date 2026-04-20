@@ -10,7 +10,7 @@ const SAMPLE_RATE = 16000;
 // Referencias al DOM
 const messageInput = document.getElementById('message-input');
 const voiceBtn = document.getElementById('voice-btn');
-const statusDiv = document.getElementById('status-div');
+const statusDiv = document.getElementById('status'); // ✅ Corregido: 'status' no 'status-div'
 
 // Socket.IO
 const socket = io();
@@ -19,38 +19,48 @@ socket.on('connect', () => {
   console.log('✅ Conectado al servidor Jarvis');
 });
 
-// Escuchar respuestas de Jarvis (texto + voz)
+// Escuchar respuestas de Jarvis
 socket.on('jarvis:respuesta', (data) => {
   if (data?.respuesta) {
-    // Mostrar en chat
     agregarMensaje(data.respuesta, 'jarvis');
-    
-    // Hablar con síntesis de voz
     speakText(data.respuesta);
   }
 });
 
-// Escuchar texto reconocido por voz (para mostrarlo antes de enviar)
+// Escuchar texto reconocido por voz
 socket.on('voice:resultado', (data) => {
   console.log(`🎤 Texto reconocido: "${data.text}"`);
   
-  // Mostrar en input y enviar automáticamente
   if (messageInput) {
     messageInput.value = data.text;
   }
   
-  // Agregar al chat como mensaje del usuario
   agregarMensaje(`🎤 Dijiste: "${data.text}"`, 'user');
   
-  // Enviar a Jarvis después de 300ms
   setTimeout(() => {
     if (messageInput?.value.trim()) {
-      enviarMensaje(); // Esto emitirá 'jarvis:mensaje' y disparará la respuesta
+      enviarMensaje();
     }
   }, 300);
 });
 
-// 🎤 Iniciar grabación de voz CON AUDIO CONVERSION
+// ✅ Escuchar respuestas de WhatsApp
+socket.on('whatsapp:respuesta', (data) => {
+  if (data?.mensaje) {
+    agregarMensaje(data.mensaje, 'jarvis');
+    if (data.hablar) speakText(data.mensaje);
+  }
+});
+
+// ✅ Confirmación de recordatorio
+socket.on('jarvis:confirmacion', (data) => {
+  if (data?.mensaje) {
+    agregarMensaje(data.mensaje, 'jarvis');
+    speakText(data.mensaje);
+  }
+});
+
+// 🎤 Iniciar grabación de voz
 async function startListening() {
   if (!voiceEnabled) {
     agregarMensaje('🔇 La voz está silenciada.', 'jarvis');
@@ -63,13 +73,9 @@ async function startListening() {
   }
   
   try {
-    // Crear AudioContext
     audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-    
-    // Cargar el AudioWorklet
     await audioContext.audioWorklet.addModule('audio-processor.js');
     
-    // Obtener micrófono
     mediaStream = await navigator.mediaDevices.getUserMedia({ 
       audio: { 
         channelCount: 1,
@@ -79,17 +85,13 @@ async function startListening() {
       } 
     });
     
-    // Crear nodos
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
     audioProcessor = new AudioWorkletNode(audioContext, 'audio-processor');
     
-    // Conectar nodos
     sourceNode.connect(audioProcessor);
     
-    // Escuchar datos de audio
     audioProcessor.port.onmessage = (event) => {
       if (socket.connected) {
-        // Convertir Float32Array a Int16Array (PCM)
         const floatData = new Float32Array(event.data);
         const int16Data = new Int16Array(floatData.length);
         
@@ -98,14 +100,12 @@ async function startListening() {
           int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
         
-        // Enviar al servidor
         socket.emit('voice:audio', int16Data.buffer);
       }
     };
     
     isListening = true;
     
-    // Actualizar UI
     if (voiceBtn) {
       voiceBtn.classList.add('listening');
       voiceBtn.innerHTML = '🔴';
@@ -120,45 +120,7 @@ async function startListening() {
     agregarMensaje('⛔ No pude acceder al micrófono.', 'jarvis');
   }
 }
-// ===== FUNCIÓN CREAR RECORDATORIO (FALTABA) =====
-function crearRecordatorio() {
-  const hora = document.getElementById('hora-recordatorio')?.value;
-  const texto = document.getElementById('texto-recordatorio')?.value;
-  
-  if (!hora || !texto) {
-    agregarMensaje('⚠️ Por favor, completa la hora y el mensaje.', 'jarvis');
-    speakText('Por favor, completa la hora y el mensaje del recordatorio.');
-    return;
-  }
-  
-  // Emitir al servidor
-  socket.emit('jarvis:recordatorio', { hora, mensaje: texto });
-  
-  // Feedback visual
-  agregarMensaje(`✅ Recordatorio programado: ${texto} a las ${hora}`, 'jarvis');
-  speakText(`Perfecto, he programado un recordatorio para las ${hora}: ${texto}`);
-  
-  // Limpiar campos
-  document.getElementById('hora-recordatorio').value = '';
-  document.getElementById('texto-recordatorio').value = '';
-}
 
-// ===== COMANDOS PARA CONSULTAR WHATSAPP =====
-function consultarWhatsApp(comando) {
-  socket.emit('whatsapp:consulta', { comando });
-}
-
-// Escuchar respuestas de WhatsApp
-socket.on('whatsapp:respuesta', (data) => {
-  if (data?.mensaje) {
-    agregarMensaje(data.mensaje, 'jarvis');
-    if (data.hablar) speakText(data.mensaje);
-  }
-});
-
-// Hacer función global
-window.crearRecordatorio = crearRecordatorio;
-window.consultarWhatsApp = consultarWhatsApp;
 // ⏹️ Detener grabación
 function stopListening() {
   if (audioProcessor) {
@@ -183,7 +145,6 @@ function stopListening() {
   
   isListening = false;
   
-  // Resetear UI
   if (voiceBtn) {
     voiceBtn.classList.remove('listening');
     voiceBtn.innerHTML = '🎤';
@@ -202,13 +163,37 @@ function toggleListening() {
   }
 }
 
+// ✅ CREAR RECORDATORIO (función que faltaba)
+function crearRecordatorio() {
+  const hora = document.getElementById('hora-recordatorio')?.value;
+  const texto = document.getElementById('texto-recordatorio')?.value;
+  
+  if (!hora || !texto) {
+    agregarMensaje('⚠️ Por favor, completa la hora y el mensaje.', 'jarvis');
+    speakText('Por favor, completa la hora y el mensaje del recordatorio.');
+    return;
+  }
+  
+  socket.emit('jarvis:recordatorio', { hora, mensaje: texto });
+  agregarMensaje(`✅ Recordatorio programado: ${texto} a las ${hora}`, 'jarvis');
+  speakText(`Perfecto, he programado un recordatorio para las ${hora}: ${texto}`);
+  
+  document.getElementById('hora-recordatorio').value = '';
+  document.getElementById('texto-recordatorio').value = '';
+}
+
+// ✅ CONSULTAR WHATSAPP
+function consultarWhatsApp(comando) {
+  socket.emit('whatsapp:consulta', { comando });
+}
+
 // Función para agregar mensajes
 function agregarMensaje(texto, tipo) {
   const chatMessages = document.getElementById('chat-messages');
   if (!chatMessages) return;
   
   const mensajeDiv = document.createElement('div');
-  mensajeDiv.classList.add('mensaje', tipo);
+  mensajeDiv.classList.add('message', tipo); // ✅ Corregido: 'message' no 'mensaje'
   
   const hora = new Date().toLocaleTimeString('es-ES', { 
     hour: '2-digit', 
@@ -230,15 +215,12 @@ function enviarMensaje() {
   
   const mensaje = messageInput.value.trim();
   
-  // Agregar al chat
   agregarMensaje(mensaje, 'user');
   
-  // Enviar al servidor
   if (typeof socket !== 'undefined') {
     socket.emit('jarvis:mensaje', { mensaje });
   }
   
-  // Limpiar input
   messageInput.value = '';
 }
 
@@ -257,29 +239,7 @@ function speakText(text) {
     window.speechSynthesis.speak(utterance);
   }
 }
-// Cuando Jarvis  te vaya a hablar:
-function hablarRespuesta(respuesta) {
-  // 🔴 PAUSAR el reconocimiento mientras habla
-  if (recognition) {
-    recognition.stop();
-  }
-  
-  const utterance = new SpeechSynthesisUtterance(respuesta);
-  utterance.lang = 'es-ES';
-  utterance.rate = 1.0;
-  
-  utterance.onend = () => {
-    console.log('✅ Jarvis terminó de hablar');
-    // 🔴 REANUDAR después de 1 segundo
-    setTimeout(() => {
-      if (recognition) {
-        recognition.start();
-      }
-    }, 1000);
-  };
-  
-  speechSynthesis.speak(utterance);
-}
+
 // Función INICIAR JARVIS
 async function iniciarJarvis() {
   console.log('🚀 Iniciando Jarvis...');
@@ -310,6 +270,8 @@ window.toggleListening = toggleListening;
 window.enviarMensaje = enviarMensaje;
 window.agregarMensaje = agregarMensaje;
 window.speakText = speakText;
+window.crearRecordatorio = crearRecordatorio;
+window.consultarWhatsApp = consultarWhatsApp;
 
 // Atajo de teclado Ctrl+M
 document.addEventListener('keydown', (e) => {
