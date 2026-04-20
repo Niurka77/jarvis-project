@@ -1,8 +1,10 @@
 import { model } from '../config/gemini.js';
 
-// Agrega esta función al inicio de src/services/ai.js
 export async function generarRespuestaSugerida(mensaje, contexto = '') {
   try {
+    console.log('🔄 Intentando llamar a Gemini API...');
+    console.log('📝 Mensaje:', mensaje);
+    
     const prompt = `Eres Jarvis, asistente de Niurka. Responde en JSON:
 {
   "respuesta": "tu respuesta útil y amigable",
@@ -15,12 +17,21 @@ Contexto: ${contexto}`;
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const texto = response.text();
+    
+    console.log('✅ Gemini respondió:', texto);
+    
     const inicio = texto.indexOf('{');
     const fin = texto.lastIndexOf('}') + 1;
     return JSON.parse(texto.substring(inicio, fin));
     
   } catch (error) {
-    // 🔄 FALLBACK: Respuesta básica si la API falla
+    // 🔴 LOG DETALLADO DEL ERROR
+    console.error('❌ ERROR GEMINI DETALLADO:');
+    console.error('📛 Message:', error.message);
+    console.error('📛 Status:', error.status);
+    console.error('📛 Stack:', error.stack);
+    console.error('📛 Full error:', JSON.stringify(error, null, 2));
+    
     console.warn("⚠️ IA no disponible, usando respuesta fallback");
     
     return {
@@ -30,6 +41,8 @@ Contexto: ${contexto}`;
     };
   }
 }
+
+
 
 export async function analizarMensajeGrupo(mensaje) {
   const prompt = `Analiza este mensaje de WhatsApp y decide si es importante para Niurka.

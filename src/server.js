@@ -1,3 +1,5 @@
+// Agrega esta variable global arriba del todo
+let jarvisEstaHablando = false;
 // ✅ AGREGA ESTO EN LA LÍNEA 1 de src/server.js
 import 'dotenv/config';
 
@@ -43,20 +45,49 @@ function connectToVoiceService() {
       voiceSocket.send(JSON.stringify({ type: 'config', sampleRate: 16000 }));
     });
     
-    voiceSocket.on('message', async (data) => {
+
+
+// ... en la conexión de voiceSocket.on('message', ...)
+voiceSocket.on('message', async (data) => {
   try {
     const result = JSON.parse(data.toString());
     if (result.final && result.text) {
       const textoReconocido = result.text.trim();
+      
+      // 🔴 FILTRAR: Si Jarvis está hablando, ignorar
+      if (jarvisEstaHablando) {
+        console.log('⏸️ Ignorando audio (Jarvis está hablando)');
+        return;
+      }
+      
+      // 🔴 FILTRAR: Si el texto contiene frases de Jarvis, ignorar
+      const frasesDeJarvis = [
+        'hola niurka',
+        'te escucho fuerte y claro',
+        'estoy a tu disposición',
+        'en qué puedo ayudarte',
+        'es un gusto saludarte',
+        'jarvis está listo'
+      ];
+      
+      const esFraseDeJarvis = frasesDeJarvis.some(frase => 
+        textoReconocido.toLowerCase().includes(frase)
+      );
+      
+      if (esFraseDeJarvis) {
+        console.log('⏸️ Ignorando eco de Jarvis');
+        return;
+      }
+      
       console.log(`🎯 Voz reconocida: "${textoReconocido}"`);
       
-      // ✅ 1. Emitir al frontend para que se muestre en el chat
+      // 1. Emitir al frontend
       io.emit('voice:resultado', { text: textoReconocido });
       
-      // ✅ 2. Procesar con IA como si fuera un mensaje normal
+      // 2. Procesar con IA
       const respuesta = await generarRespuestaSugerida(textoReconocido);
       
-      // ✅ 3. Guardar en Supabase
+      // 3. Guardar en Supabase
       if (respuesta) {
         await supabase.from('jarvis_memory').insert([{
           content: textoReconocido,
@@ -65,8 +96,15 @@ function connectToVoiceService() {
         }]);
       }
       
-      // ✅ 4. Emitir respuesta al frontend (para que Jarvis "hable")
+      // 4. 🔴 ACTIVAR MUTE mientras Jarvis responde
+      jarvisEstaHablando = true;
       io.emit('jarvis:respuesta', respuesta);
+      
+      // 5. 🔴 DESACTIVAR MUTE después de 5 segundos
+      setTimeout(() => {
+        jarvisEstaHablando = false;
+        console.log('✅ Jarvis terminó de hablar, micrófono activo');
+      }, 5000);
     }
   } catch (e) {
     console.error('❌ Error procesando voz:', e);

@@ -219,7 +219,29 @@ function speakText(text) {
     window.speechSynthesis.speak(utterance);
   }
 }
-
+// Cuando Jarvis vaya a hablar:
+function hablarRespuesta(respuesta) {
+  // 🔴 PAUSAR el reconocimiento mientras habla
+  if (recognition) {
+    recognition.stop();
+  }
+  
+  const utterance = new SpeechSynthesisUtterance(respuesta);
+  utterance.lang = 'es-ES';
+  utterance.rate = 1.0;
+  
+  utterance.onend = () => {
+    console.log('✅ Jarvis terminó de hablar');
+    // 🔴 REANUDAR después de 1 segundo
+    setTimeout(() => {
+      if (recognition) {
+        recognition.start();
+      }
+    }, 1000);
+  };
+  
+  speechSynthesis.speak(utterance);
+}
 // Función INICIAR JARVIS
 async function iniciarJarvis() {
   console.log('🚀 Iniciando Jarvis...');
