@@ -1,3 +1,7 @@
+# Agrega esto AL PRINCIPIO del archivo, antes de cualquier import
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 # src/voice-service.py
 import asyncio
 import websockets
@@ -10,7 +14,7 @@ from vosk import Model, KaldiRecognizer
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "vosk-models", "vosk-model-small-es-0.42")
 SAMPLE_RATE = 16000
 
-print(f"🔍 Cargando modelo desde: {MODEL_PATH}")
+print(f"[INFO] Cargando modelo desde: {MODEL_PATH}")
 
 if not os.path.exists(MODEL_PATH):
     print(f"❌ Modelo no encontrado en {MODEL_PATH}")

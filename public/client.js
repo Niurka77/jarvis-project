@@ -19,21 +19,35 @@ socket.on('connect', () => {
   console.log('✅ Conectado al servidor Jarvis');
 });
 
-// Escuchar resultados de voz
+// Escuchar respuestas de Jarvis (texto + voz)
+socket.on('jarvis:respuesta', (data) => {
+  if (data?.respuesta) {
+    // Mostrar en chat
+    agregarMensaje(data.respuesta, 'jarvis');
+    
+    // Hablar con síntesis de voz
+    speakText(data.respuesta);
+  }
+});
+
+// Escuchar texto reconocido por voz (para mostrarlo antes de enviar)
 socket.on('voice:resultado', (data) => {
-  console.log(`🎯 Reconocido: "${data.text}"`);
+  console.log(`🎤 Texto reconocido: "${data.text}"`);
   
+  // Mostrar en input y enviar automáticamente
   if (messageInput) {
     messageInput.value = data.text;
   }
   
+  // Agregar al chat como mensaje del usuario
   agregarMensaje(`🎤 Dijiste: "${data.text}"`, 'user');
   
+  // Enviar a Jarvis después de 300ms
   setTimeout(() => {
-    if (messageInput && messageInput.value.trim()) {
-      enviarMensaje();
+    if (messageInput?.value.trim()) {
+      enviarMensaje(); // Esto emitirá 'jarvis:mensaje' y disparará la respuesta
     }
-  }, 500);
+  }, 300);
 });
 
 // 🎤 Iniciar grabación de voz CON AUDIO CONVERSION

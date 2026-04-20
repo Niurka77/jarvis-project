@@ -39,18 +39,35 @@ function connectToVoiceService() {
       voiceSocket.send(JSON.stringify({ type: 'config', sampleRate: 16000 }));
     });
     
-    voiceSocket.on('message', (data) => {
-      try {
-        const result = JSON.parse(data.toString());
-        if (result.final && result.text) {
-          console.log(`🎯 Voz reconocida: "${result.text}"`);
-          // ✅ EMITIR AL FRONTEND el texto reconocido
-          io.emit('voice:resultado', { text: result.text });
-        }
-      } catch (e) {
-        console.error('❌ Error parseando respuesta de Vosk:', e);
+    voiceSocket.on('message', async (data) => {
+  try {
+    const result = JSON.parse(data.toString());
+    if (result.final && result.text) {
+      const textoReconocido = result.text.trim();
+      console.log(`🎯 Voz reconocida: "${textoReconocido}"`);
+      
+      // ✅ 1. Emitir al frontend para que se muestre en el chat
+      io.emit('voice:resultado', { text: textoReconocido });
+      
+      // ✅ 2. Procesar con IA como si fuera un mensaje normal
+      const respuesta = await generarRespuestaSugerida(textoReconocido);
+      
+      // ✅ 3. Guardar en Supabase
+      if (respuesta) {
+        await supabase.from('jarvis_memory').insert([{
+          content: textoReconocido,
+          category: 'voice',
+          metadata: { respuesta: respuesta.respuesta }
+        }]);
       }
-    });
+      
+      // ✅ 4. Emitir respuesta al frontend (para que Jarvis "hable")
+      io.emit('jarvis:respuesta', respuesta);
+    }
+  } catch (e) {
+    console.error('❌ Error procesando voz:', e);
+  }
+});
     
     voiceSocket.on('error', (err) => {
       console.error('❌ Error en conexión Vosk:', err.message);
