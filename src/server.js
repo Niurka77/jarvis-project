@@ -181,7 +181,73 @@ connectToVoiceService();
 
 // Inicializar WhatsApp
 inicializarWhatsApp(io);
-
+// ===== MANEJO DE CONSULTAS WHATSAPP =====
+socket.on('whatsapp:consulta', async (data) => {
+  const { comando } = data;
+  let respuesta = '';
+  let hablar = true;
+  
+  try {
+    const { getClient } = await import('./services/whatsapp.js');
+    const client = await getClient();
+    
+    if (!client || !client.isConnected?.()) {
+      respuesta = '❌ WhatsApp no está conectado. Intenta reiniciar el servidor.';
+    } else {
+      switch(comando.toLowerCase()) {
+        case 'estado':
+          respuesta = '✅ WhatsApp está conectado y funcionando correctamente.';
+          break;
+          
+        case 'grupos':
+        case 'mis grupos':
+          const chats = await client.getChats();
+          const grupos = chats.filter(c => c.isGroup).slice(0, 10);
+          if (grupos.length > 0) {
+            const nombres = grupos.map(g => `• ${g.name}`).join('\n');
+            respuesta = `📱 Tus grupos (primeros 10):\n${nombres}`;
+          } else {
+            respuesta = '📭 No se encontraron grupos o aún no se han sincronizado.';
+          }
+          break;
+          
+        case 'chats':
+        case 'últimos chats':
+        case 'mis chats':
+          const chats2 = await client.getChats();
+          const recientes = chats2.filter(c => !c.isGroup).slice(0, 5);
+          if (recientes.length > 0) {
+            const lista = recientes.map(c => `• ${c.name || c.pushname || 'Contacto'}`).join('\n');
+            respuesta = `💬 Últimos chats:\n${lista}`;
+          } else {
+            respuesta = '📭 No hay chats recientes disponibles.';
+          }
+          break;
+          
+        case 'mensajes nuevos':
+        case 'nuevos mensajes':
+        case 'hay mensajes':
+          respuesta = '🔍 Revisando bandeja de entrada... (esta función requiere configuración adicional)';
+          break;
+          
+        case 'mi número':
+        case 'mi whatsapp':
+          const info = client.info;
+          respuesta = `📱 Tu WhatsApp: ${info?.pushname || 'Usuario'}\nNúmero: ${info?.wid?.user || 'No disponible'}`;
+          break;
+          
+        default:
+          respuesta = '❓ Comandos disponibles: "estado WhatsApp", "mis grupos", "últimos chats", "mi número"';
+          hablar = false;
+      }
+    }
+  } catch (err) {
+    console.error('❌ Error consultando WhatsApp:', err);
+    respuesta = '⚠️ Ocurrió un error al consultar WhatsApp. Revisa la consola del servidor.';
+  }
+  
+  socket.emit('whatsapp:respuesta', { mensaje: respuesta, hablar });
+});
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Centro de Control Jarvis corriendo en http://localhost:${PORT}`);

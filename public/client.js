@@ -120,7 +120,45 @@ async function startListening() {
     agregarMensaje('⛔ No pude acceder al micrófono.', 'jarvis');
   }
 }
+// ===== FUNCIÓN CREAR RECORDATORIO (FALTABA) =====
+function crearRecordatorio() {
+  const hora = document.getElementById('hora-recordatorio')?.value;
+  const texto = document.getElementById('texto-recordatorio')?.value;
+  
+  if (!hora || !texto) {
+    agregarMensaje('⚠️ Por favor, completa la hora y el mensaje.', 'jarvis');
+    speakText('Por favor, completa la hora y el mensaje del recordatorio.');
+    return;
+  }
+  
+  // Emitir al servidor
+  socket.emit('jarvis:recordatorio', { hora, mensaje: texto });
+  
+  // Feedback visual
+  agregarMensaje(`✅ Recordatorio programado: ${texto} a las ${hora}`, 'jarvis');
+  speakText(`Perfecto, he programado un recordatorio para las ${hora}: ${texto}`);
+  
+  // Limpiar campos
+  document.getElementById('hora-recordatorio').value = '';
+  document.getElementById('texto-recordatorio').value = '';
+}
 
+// ===== COMANDOS PARA CONSULTAR WHATSAPP =====
+function consultarWhatsApp(comando) {
+  socket.emit('whatsapp:consulta', { comando });
+}
+
+// Escuchar respuestas de WhatsApp
+socket.on('whatsapp:respuesta', (data) => {
+  if (data?.mensaje) {
+    agregarMensaje(data.mensaje, 'jarvis');
+    if (data.hablar) speakText(data.mensaje);
+  }
+});
+
+// Hacer función global
+window.crearRecordatorio = crearRecordatorio;
+window.consultarWhatsApp = consultarWhatsApp;
 // ⏹️ Detener grabación
 function stopListening() {
   if (audioProcessor) {
