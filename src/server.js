@@ -152,7 +152,10 @@ io.on('connection', (socket) => {
       mensaje: `✅ Recordatorio creado para las ${hora}`
     });
   });
-  
+  const { getClient, isWhatsAppReady } = await import('./services/whatsapp.js');
+if (!isWhatsAppReady()) {
+  respuesta = '⏳ WhatsApp aún se está inicializando...';
+}
   // === ✅ CONSULTAS WHATSAPP (DENTRO DEL BLOQUE CORRECTO) ===
   socket.on('whatsapp:consulta', async (data) => {
     const { comando } = data;
@@ -163,8 +166,8 @@ io.on('connection', (socket) => {
       const { getClient } = await import('./services/whatsapp.js');
       const client = await getClient();
       
-      if (!client || !client.isConnected?.()) {
-        respuesta = '❌ WhatsApp no está conectado. Intenta reiniciar el servidor.';
+     if (!client?.info?.wid) {
+  respuesta = '❌ WhatsApp no está conectado. Escanea el QR si es necesario.';
       } else {
         switch(comando.toLowerCase()) {
           case 'estado':

@@ -53,7 +53,10 @@ export function inicializarWhatsApp(socketIO) {
   client.initialize();
   return client;
 }
-
+// Agrega esta función auxiliar:
+export function isWhatsAppReady() {
+  return client?.info?.wid !== undefined;
+}
 export function getClient() {
   return client;
 }

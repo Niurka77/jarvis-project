@@ -41,7 +41,23 @@ Contexto: ${contexto}`;
     };
   }
 }
+// Al inicio del archivo:
+const geminiCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
+// Dentro de generarRespuestaSugerida, antes de llamar a Gemini:
+const cacheKey = mensaje.toLowerCase().trim();
+const cached = geminiCache.get(cacheKey);
+if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+  console.log('📦 Respuesta desde caché');
+  return cached.data;
+}
+
+// Después de obtener respuesta exitosa de Gemini:
+geminiCache.set(cacheKey, {
+  data: resultado,
+  timestamp: Date.now()
+});
 
 
 export async function analizarMensajeGrupo(mensaje) {
