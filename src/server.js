@@ -119,10 +119,75 @@ export function sendAudioToVosk(audioBuffer) {
 // ===== CONEXIONES SOCKET.IO =====
 io.on('connection', (socket) => {
   console.log('🔌 Cliente conectado al Centro de Control');
-  
-  // === MENSAJES DE TEXTO ===
+  // === 🛠️ COMANDOS DE DEBUG (solo para desarrollo) ===
+socket.on('debug:whatsapp', () => {
+  import('./debug.js').then(({ debugWhatsApp }) => debugWhatsApp());
+});
+
+socket.on('debug:chats', () => {
+  import('./debug.js').then(({ debugChats }) => debugChats());
+});
+  // === 🎯 MENSAJES DE TEXTO - CON DETECCIÓN DE COMANDOS ===
   socket.on('jarvis:mensaje', async (data) => {
     const { mensaje } = data;
+    
+   // 🔍 Regex más tolerante para voz
+const matchEnvio = mensaje.match(
+  /(?:enviar|manda|escribe|manda mensaje|envía)\s+(?:a\s+|al\s+|a la\s+)?([^:;,]+?)\s*[:,;]\s*(.+)/i
+);
+    
+    if (matchEnvio) {
+      const [, contacto, texto] = matchEnvio;
+      console.log(`📤 Detectado comando de envío: "${contacto}" -> "${texto}"`);
+      
+      try {
+        if (!isWhatsAppReady()) {
+          socket.emit('jarvis:respuesta', {
+            respuesta: '⏳ WhatsApp aún se está inicializando. Espera unos segundos.',
+            accion_sugerida: 'Esperar',
+            prioridad: 'alta'
+          });
+          return;
+        }
+        
+        const client = getClient();
+        const chats = await client.getChats();
+        
+        // Buscar contacto por nombre o número
+        const destino = chats.find(c => 
+          (c.name?.toLowerCase().includes(contacto.trim().toLowerCase())) || 
+          (c.pushname?.toLowerCase().includes(contacto.trim().toLowerCase())) ||
+          c.id._serialized.includes(contacto.trim())
+        );
+        
+        if (destino) {
+          await destino.sendMessage(texto.trim());
+          console.log(`✅ Mensaje enviado a ${destino.name || destino.pushname}`);
+          
+          socket.emit('jarvis:respuesta', {
+            respuesta: `✅ Mensaje enviado exitosamente a ${destino.name || destino.pushname || contacto}`,
+            accion_sugerida: 'Esperar respuesta',
+            prioridad: 'media'
+          });
+        } else {
+          socket.emit('jarvis:respuesta', {
+            respuesta: `❌ No encontré "${contacto}" en tus chats. Verifica el nombre o usa el número completo.`,
+            accion_sugerida: 'Revisar lista de contactos',
+            prioridad: 'alta'
+          });
+        }
+      } catch (err) {
+        console.error('❌ Error enviando WhatsApp:', err);
+        socket.emit('jarvis:respuesta', {
+          respuesta: '⚠️ Error al enviar el mensaje. Revisa la consola.',
+          accion_sugerida: 'Reintentar',
+          prioridad: 'alta'
+        });
+      }
+      return; // ⚠️ IMPORTANTE: Salir aquí para NO llamar a Gemini
+    }
+    
+    // Si NO es comando de envío, usar Gemini normalmente
     const respuesta = await generarRespuestaSugerida(mensaje);
     
     if (respuesta) {
@@ -160,7 +225,6 @@ io.on('connection', (socket) => {
     let hablar = true;
     
     try {
-      // Verificar si WhatsApp está listo
       if (!isWhatsAppReady()) {
         respuesta = '⏳ WhatsApp aún se está inicializando... Escanea el QR en la terminal si es necesario.';
         socket.emit('whatsapp:respuesta', { mensaje: respuesta, hablar });
@@ -202,55 +266,15 @@ io.on('connection', (socket) => {
             }
             break;
             
-          case 'mensajes nuevos':
-          case 'nuevos mensajes':
-          case 'hay mensajes':
-            respuesta = '🔍 Revisando bandeja de entrada... (requiere configuración adicional)';
-            break;
-            
           case 'mi número':
           case 'mi whatsapp':
             const info = client.info;
             respuesta = `📱 Tu WhatsApp: ${info?.pushname || 'Usuario'}\nNúmero: ${info?.wid?.user || 'No disponible'}`;
             break;
             
-          // === 🆕 COMANDO PARA ENVIAR MENSAJES ===
-          case 'enviar mensaje':
-          case 'mandar whatsapp':
-          case 'escribir a':
-            respuesta = '📝 Para enviar: "Jarvis, enviar a [nombre/número]: [tu mensaje]"';
-            hablar = false;
-            break;
-            
           default:
-            // Detectar si es comando de envío: "enviar a [contacto]: [mensaje]"
-            const matchEnvio = comando.match(/(?:enviar|mandar|escribir)\s+(?:a\s+)?([^:]+):\s*(.+)/i);
-            if (matchEnvio) {
-              const [, contacto, texto] = matchEnvio;
-              try {
-                const client = getClient();
-                const chats = await client.getChats();
-                // Buscar contacto por nombre o número
-                const destino = chats.find(c => 
-                  (c.name?.toLowerCase().includes(contacto.trim().toLowerCase())) || 
-                  (c.pushname?.toLowerCase().includes(contacto.trim().toLowerCase())) ||
-                  c.id._serialized.includes(contacto.trim())
-                );
-                
-                if (destino) {
-                  await destino.sendMessage(texto.trim());
-                  respuesta = `✅ Mensaje enviado a ${destino.name || destino.pushname || contacto}`;
-                } else {
-                  respuesta = `❌ No encontré "${contacto}" en tus chats. Prueba con el número completo.`;
-                }
-              } catch (err) {
-                console.error('❌ Error enviando mensaje:', err);
-                respuesta = '⚠️ Error al enviar. Verifica que el contacto exista.';
-              }
-            } else {
-              respuesta = '❓ Comandos: "estado", "mis grupos", "últimos chats", "mi número", "enviar a [contacto]: [mensaje]"';
-              hablar = false;
-            }
+            respuesta = '❓ Comandos: "estado", "mis grupos", "últimos chats", "mi número"';
+            hablar = false;
         }
       }
     } catch (err) {
