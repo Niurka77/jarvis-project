@@ -59,22 +59,21 @@ export function inicializarWhatsApp(socketIO) {
   return client;
 }
 
-// ✅ FUNCIÓN CORREGIDA PARA VERIFICAR CONEXIÓN WHATSAPP
 export function isWhatsAppReady() {
-  // Verificación real compatible con whatsapp-web.js:
+  // Verificación compatible con whatsapp-web.js v1.25+
   const hasClient = client !== undefined;
   const hasInfo = client?.info !== undefined;
   const hasWid = client?.info?.wid !== undefined;
-  const isAuthenticated = client?.isAuthenticated === true;
+  const isLoggedIn = client?.isLoggedIn === true;
   
-  const ready = hasClient && hasInfo && hasWid && isAuthenticated;
+  const ready = hasClient && hasInfo && hasWid && isLoggedIn;
   
   if (!ready) {
     console.log(`🔍 Debug WhatsApp Ready: 
       hasClient: ${hasClient}, 
       hasInfo: ${hasInfo}, 
       hasWid: ${hasWid}, 
-      isAuthenticated: ${isAuthenticated}`);
+      isLoggedIn: ${isLoggedIn}`);
   }
   
   return ready;

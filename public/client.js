@@ -239,15 +239,7 @@ function speakText(text) {
     window.speechSynthesis.speak(utterance);
   }
 }
-// En server.js, después de detectar matchEnvio:
-socket.emit('jarvis:respuesta', {
-  respuesta: `🔍 ¿Quieres enviar a "${contacto}": "${texto}"? Responde "sí" para confirmar.`,
-  accion_sugerida: 'Confirmar envío',
-  prioridad: 'alta',
-  pendienteConfirmacion: true,  // ← Nueva bandera
-  datosEnvio: { contacto, texto }
-});
-// Y NO enviar todavía, esperar confirmación
+
 // 🎤 Fallback con Web Speech API (más preciso para español)
 async function recognizeWithWebSpeech() {
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
