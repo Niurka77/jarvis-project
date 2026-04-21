@@ -59,24 +59,10 @@ export function inicializarWhatsApp(socketIO) {
   return client;
 }
 
+// ✅ VERSIÓN SIMPLIFICADA Y FUNCIONAL
 export function isWhatsAppReady() {
-  // Verificación compatible con whatsapp-web.js v1.25+
-  const hasClient = client !== undefined;
-  const hasInfo = client?.info !== undefined;
-  const hasWid = client?.info?.wid !== undefined;
-  const isLoggedIn = client?.isLoggedIn === true;
-  
-  const ready = hasClient && hasInfo && hasWid && isLoggedIn;
-  
-  if (!ready) {
-    console.log(`🔍 Debug WhatsApp Ready: 
-      hasClient: ${hasClient}, 
-      hasInfo: ${hasInfo}, 
-      hasWid: ${hasWid}, 
-      isLoggedIn: ${isLoggedIn}`);
-  }
-  
-  return ready;
+  // Si client.info.wid existe, WhatsApp puede enviar mensajes
+  return client?.info?.wid !== undefined;
 }
 
 // ✅ Función para obtener el cliente
