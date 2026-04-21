@@ -131,9 +131,9 @@ socket.on('debug:chats', () => {
   socket.on('jarvis:mensaje', async (data) => {
     const { mensaje } = data;
     
-   // 🔍 Regex más tolerante para voz
+// 🔍 Regex mejorado para detectar MÁS variaciones de envío
 const matchEnvio = mensaje.match(
-  /(?:enviar|manda|escribe|manda mensaje|envía)\s+(?:a\s+|al\s+|a la\s+)?([^:;,]+?)\s*[:,;]\s*(.+)/i
+  /(?:enviar|manda|escribe|envíale|manda un mensaje|escribir)\s+(?:a\s+|al\s+|a la\s+)?([^:;,]+?)\s*(?:[:;,]|de|que)\s*(.+)/i
 );
     
     if (matchEnvio) {
@@ -149,7 +149,16 @@ const matchEnvio = mensaje.match(
           });
           return;
         }
-        
+ // 🔍 DETECTAR SI PIDE LEER MENSAJES
+const matchLeer = mensaje.match(/(?:dime|qué|que|lee|leer|revisar|ver)\s+(?:qué|que)\s+(?:me\s+)?(?:escribió|envió|mandó|dijo)\s+(?:el\s+grupo\s+de\s+|la\s+|de\s+)?([^.,;!?]+)/i);
+
+if (matchLeer) {
+  const [, contacto] = matchLeer;
+  console.log(`📖 Detectado comando de lectura: "${contacto.trim()}"`);
+  
+  socket.emit('whatsapp:leer_mensajes', { contacto: contacto.trim() });
+  return; // Salir para NO llamar a Gemini
+}       
         const client = getClient();
         const chats = await client.getChats();
         
@@ -283,6 +292,68 @@ const matchEnvio = mensaje.match(
     }
     
     socket.emit('whatsapp:respuesta', { mensaje: respuesta, hablar });
+    // === 📱 LEER ÚLTIMOS MENSAJES DE UN CONTACTO/GRUPO ===
+socket.on('whatsapp:leer_mensajes', async (data) => {
+  const { contacto } = data;
+  
+  try {
+    if (!isWhatsAppReady()) {
+      socket.emit('jarvis:respuesta', {
+        respuesta: '⏳ WhatsApp no está listo aún.',
+        prioridad: 'alta'
+      });
+      return;
+    }
+    
+    const client = getClient();
+    const chats = await client.getChats();
+    
+    // Buscar contacto
+    const chat = chats.find(c => 
+      c.name?.toLowerCase().includes(contacto.toLowerCase()) ||
+      c.pushname?.toLowerCase().includes(contacto.toLowerCase()) ||
+      c.id._serialized.includes(contacto)
+    );
+    
+    if (!chat) {
+      socket.emit('jarvis:respuesta', {
+        respuesta: `❌ No encontré "${contacto}" en tus chats.`,
+        prioridad: 'alta'
+      });
+      return;
+    }
+    
+    // Obtener últimos mensajes
+    const messages = await chat.fetchMessages({ limit: 5 });
+    
+    if (messages.length === 0) {
+      socket.emit('jarvis:respuesta', {
+        respuesta: `📭 No hay mensajes recientes de ${chat.name || chat.pushname}.`,
+        prioridad: 'media'
+      });
+      return;
+    }
+    
+    // Formatear mensajes
+    const mensajesTexto = messages.map(m => {
+      const hora = m.timestamp.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+      const de = m.fromMe ? 'Tú' : (m.author || chat.name || chat.pushname);
+      return `• [${hora}] ${de}: ${m.body}`;
+    }).join('\n');
+    
+    socket.emit('jarvis:respuesta', {
+      respuesta: `📱 Últimos mensajes de ${chat.name || chat.pushname}:\n\n${mensajesTexto}`,
+      prioridad: 'media'
+    });
+    
+  } catch (err) {
+    console.error('❌ Error leyendo mensajes:', err);
+    socket.emit('jarvis:respuesta', {
+      respuesta: '⚠️ Error al leer los mensajes.',
+      prioridad: 'alta'
+    });
+  }
+});
   });
 });
 
