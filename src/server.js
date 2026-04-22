@@ -19,18 +19,87 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 app.use(express.static(path.join(__dirname, '../public')));
 app.use(express.json());
 
+// === 🧠 ESTADO CONVERSACIONAL POR USUARIO (para flujo "¿hay más mensajes?") ===
+const estadoUsuario = new Map(); // socket.id -> { contexto: 'leyendo_mensajes', contacto: 'Dayna', ultimoChat: chatObj }
+
 // === VARIABLES DE VOSK ===
 let voiceSocket = null;
 const VOSK_WS_URL = 'ws://localhost:5001';
+
+// === 🧰 FUNCIONES AUXILIARES ===
+
+// 🔤 Normalizar texto para búsqueda fuzzy (quita emojis, acentos, mayúsculas)
+function normalizarTexto(texto) {
+  if (!texto) return '';
+  return texto.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")  // quitar acentos
+    .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "") // quitar emojis
+    .replace(/[^\w\s]/g, "")  // quitar símbolos
+    .trim();
+}
+
+// 🔍 Búsqueda fuzzy de contactos (encuentra "Kaili" → "Kaililis Hermana🐱🎋")
+function buscarContactoFuzzy(nombreBuscado, chats) {
+  const buscado = normalizarTexto(nombreBuscado);
+  if (!buscado) return null;
+  
+  // 1. Búsqueda exacta normalizada
+  let resultado = chats.find(c => 
+    normalizarTexto(c.name) === buscado || 
+    normalizarTexto(c.pushname) === buscado
+  );
+  if (resultado) return resultado;
+  
+  // 2. Búsqueda por inclusión (parcial)
+  resultado = chats.find(c => 
+    normalizarTexto(c.name)?.includes(buscado) || 
+    normalizarTexto(c.pushname)?.includes(buscado)
+  );
+  if (resultado) return resultado;
+  
+  // 3. Búsqueda por palabras clave (ej: "Seli" en "Selinitamejoramiga")
+  const palabrasBuscado = buscado.split(/\s+/).filter(p => p.length > 2);
+  if (palabrasBuscado.length > 0) {
+    resultado = chats.find(c => {
+      const nombreNorm = normalizarTexto(c.name || c.pushname || '');
+      return palabrasBuscado.every(p => nombreNorm.includes(p));
+    });
+    if (resultado) return resultado;
+  }
+  
+  // 4. Búsqueda por ID/numero (fallback)
+  resultado = chats.find(c => c.id._serialized?.includes(nombreBuscado));
+  return resultado || null;
+}
+
+// ✨ Refinar mensaje con Gemini (estilo "secretaria inteligente")
+async function refinarMensajeParaEnviar(mensajeOriginal, contextoContacto = '') {
+  try {
+    const prompt = `Eres la secretaria de Niurka. Tu trabajo:
+1. Corregir ortografía y gramática
+2. Mantener el tono original (cariñoso, formal, urgente, etc.)
+3. Hacerlo claro y respetuoso
+4. NO cambiar la intención ni agregar información nueva
+
+Mensaje original: "${mensajeOriginal}"
+Para: ${contextoContacto || 'contacto de WhatsApp'}
+
+Responde SOLO con el mensaje refinado, sin explicaciones ni comillas.`;
+
+    const { model } = await import('../config/gemini.js');
+    const result = await model.generateContent(prompt);
+    return (await result.response).text().trim();
+  } catch (e) {
+    console.warn('⚠️ No se pudo refinar mensaje, usando original');
+    return mensajeOriginal;
+  }
+}
 
 // === FUNCIÓN PARA CONECTAR AL SERVICIO DE VOZ ===
 function connectToVoiceService() {
@@ -47,65 +116,29 @@ function connectToVoiceService() {
         const result = JSON.parse(data.toString());
         if (result.final && result.text) {
           const textoReconocido = result.text.trim();
+          if (jarvisEstaHablando) return;
           
-          if (jarvisEstaHablando) {
-            console.log('⏸️ Ignorando audio (Jarvis está hablando)');
-            return;
-          }
-          
-          const frasesDeJarvis = [
-            'hola niurka', 'te escucho fuerte y claro', 'estoy a tu disposición',
-            'en qué puedo ayudarte', 'es un gusto saludarte', 'jarvis está listo'
-          ];
-          
-          const esFraseDeJarvis = frasesDeJarvis.some(frase => 
-            textoReconocido.toLowerCase().includes(frase)
-          );
-          
-          if (esFraseDeJarvis) {
-            console.log('⏸️ Ignorando eco de Jarvis');
-            return;
-          }
+          const frasesDeJarvis = ['hola niurka', 'te escucho fuerte y claro', 'estoy a tu disposición', 'en qué puedo ayudarte', 'es un gusto saludarte', 'jarvis está listo'];
+          if (frasesDeJarvis.some(f => textoReconocido.toLowerCase().includes(f))) return;
           
           console.log(`🎯 Voz reconocida: "${textoReconocido}"`);
           io.emit('voice:resultado', { text: textoReconocido });
           
           const respuesta = await generarRespuestaSugerida(textoReconocido);
-          
           if (respuesta) {
-            await supabase.from('jarvis_memory').insert([{
-              content: textoReconocido,
-              category: 'voice',
-              metadata: { respuesta: respuesta.respuesta }
-            }]);
+            await supabase.from('jarvis_memory').insert([{ content: textoReconocido, category: 'voice', metadata: { respuesta: respuesta.respuesta } }]);
           }
           
           jarvisEstaHablando = true;
           io.emit('jarvis:respuesta', respuesta);
-          
-          setTimeout(() => {
-            jarvisEstaHablando = false;
-            console.log('✅ Jarvis terminó de hablar, micrófono activo');
-          }, 5000);
+          setTimeout(() => { jarvisEstaHablando = false; }, 5000);
         }
-      } catch (e) {
-        console.error('❌ Error procesando voz:', e);
-      }
+      } catch (e) { console.error('❌ Error procesando voz:', e); }
     });
     
-    voiceSocket.on('error', (err) => {
-      console.error('❌ Error en conexión Vosk:', err.message);
-      console.log('💡 Asegúrate de ejecutar: python src/voice-service.py');
-    });
-    
-    voiceSocket.on('close', () => {
-      console.log('🔌 Desconectado de Vosk. Reconectando en 5s...');
-      setTimeout(connectToVoiceService, 5000);
-    });
-    
-  } catch (err) {
-    console.error('❌ No se pudo conectar al servicio de voz:', err);
-  }
+    voiceSocket.on('error', (err) => console.error('❌ Error Vosk:', err.message));
+    voiceSocket.on('close', () => setTimeout(connectToVoiceService, 5000));
+  } catch (err) { console.error('❌ No se pudo conectar a Vosk:', err); }
 }
 
 export function sendAudioToVosk(audioBuffer) {
@@ -119,241 +152,226 @@ export function sendAudioToVosk(audioBuffer) {
 // ===== CONEXIONES SOCKET.IO =====
 io.on('connection', (socket) => {
   console.log('🔌 Cliente conectado al Centro de Control');
-  // === 🛠️ COMANDOS DE DEBUG (solo para desarrollo) ===
-socket.on('debug:whatsapp', () => {
-  import('./debug.js').then(({ debugWhatsApp }) => debugWhatsApp());
-});
+  
+  // === 🛠️ COMANDOS DE DEBUG ===
+  socket.on('debug:whatsapp', () => import('./debug.js').then(({ debugWhatsApp }) => debugWhatsApp()));
+  socket.on('debug:chats', () => import('./debug.js').then(({ debugChats }) => debugChats()));
 
-socket.on('debug:chats', () => {
-  import('./debug.js').then(({ debugChats }) => debugChats());
-});
-  // === 🎯 MENSAJES DE TEXTO - CON DETECCIÓN DE COMANDOS ===
+  // === 🎯 MENSAJES DE TEXTO - CON DETECCIÓN INTELIGENTE ===
   socket.on('jarvis:mensaje', async (data) => {
     const { mensaje } = data;
+    const userId = socket.id;
+    const estado = estadoUsuario.get(userId) || {};
     
-// 🔍 Regex mejorado para detectar MÁS variaciones de envío
-const matchEnvio = mensaje.match(
-  /(?:enviar|manda|escribe|envíale|manda un mensaje|escribir)\s+(?:a\s+|al\s+|a la\s+)?([^:;,]+?)\s*(?:[:;,]|de|que)\s*(.+)/i
-);
+    console.log(`💬 Mensaje recibido: "${mensaje}" | Estado: ${estado.contexto || 'ninguno'}`);
+    
+    // 🔍 1. ¿El usuario pregunta si hay MÁS mensajes del contacto anterior?
+    if (estado.contexto === 'leyendo_mensajes' && /hay más|otros|hay otros|algo más|más mensajes/i.test(mensaje)) {
+      console.log(`🔄 Continuando lectura de ${estado.contacto}`);
+      try {
+        if (!isWhatsAppReady()) { socket.emit('jarvis:respuesta', { respuesta: '⏳ WhatsApp inicializando...', prioridad: 'alta' }); return; }
+        const client = getClient();
+        const messages = await estado.ultimoChat.fetchMessages({ limit: 5 });
+        const nuevos = messages.filter(m => !estado.mensajesLeidos?.includes(m.id._serialized));
+        
+        if (nuevos.length === 0) {
+          socket.emit('jarvis:respuesta', { respuesta: `✅ No hay más mensajes nuevos de ${estado.contacto}.`, prioridad: 'baja' });
+          estadoUsuario.delete(userId);
+          return;
+        }
+        
+        const textos = nuevos.slice(-3).map(m => {
+          const hora = new Date(m.timestamp * 1000).toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'});
+          const de = m.fromMe ? 'Tú' : (m.author?.split('@')[0] || 'Alguien');
+          return `• [${hora}] ${de}: ${m.body.substring(0, 100)}${m.body.length > 100 ? '...' : ''}`;
+        }).join('\n');
+        
+        estado.mensajesLeidos = [...(estado.mensajesLeidos || []), ...nuevos.map(m => m.id._serialized)];
+        estadoUsuario.set(userId, estado);
+        
+        socket.emit('jarvis:respuesta', {
+          respuesta: `💬 Sí, hay más:\n${textos}\n\n¿Quieres que lea los demás o responda algo?`,
+          prioridad: 'media'
+        });
+      } catch (err) {
+        console.error('❌ Error leyendo más mensajes:', err);
+        socket.emit('jarvis:respuesta', { respuesta: '⚠️ No pude cargar más mensajes.', prioridad: 'alta' });
+        estadoUsuario.delete(userId);
+      }
+      return;
+    }
+    
+    // 🔍 2. DETECTAR ENVÍO DE MENSAJE (regex flexible para lenguaje natural)
+    const matchEnvio = mensaje.match(
+      /(?:enviar|manda|escribe|envíale|manda un mensaje|escribir|dile|avísale|dile algo a)\s+(?:a\s+|al\s+|a la\s+)?([^:;,]+?)\s*(?:[:;,]|de|que|para)\s*(.+)/i
+    );
     
     if (matchEnvio) {
-      const [, contacto, texto] = matchEnvio;
-      console.log(`📤 Detectado comando de envío: "${contacto}" -> "${texto}"`);
+      const [, contactoRaw, textoRaw] = matchEnvio;
+      const contacto = contactoRaw.trim();
+      const textoOriginal = textoRaw.trim();
+      
+      console.log(`📤 Detectado envío: "${contacto}" -> "${textoOriginal}"`);
       
       try {
         if (!isWhatsAppReady()) {
+          socket.emit('jarvis:respuesta', { respuesta: '⏳ WhatsApp inicializando...', prioridad: 'alta' });
+          return;
+        }
+        
+        const client = getClient();
+        const chats = await client.getChats();
+        const destino = buscarContactoFuzzy(contacto, chats);
+        
+        if (!destino) {
+          const sugerencias = chats.slice(0, 5).map(c => c.name || c.pushname).filter(Boolean).join(', ');
           socket.emit('jarvis:respuesta', {
-            respuesta: '⏳ WhatsApp aún se está inicializando. Espera unos segundos.',
-            accion_sugerida: 'Esperar',
+            respuesta: `❌ No encontré "${contacto}". ¿Quizás: ${sugerencias}?`,
             prioridad: 'alta'
           });
           return;
         }
- // 🔍 DETECTAR SI PIDE LEER MENSAJES
-const matchLeer = mensaje.match(/(?:dime|qué|que|lee|leer|revisar|ver)\s+(?:qué|que)\s+(?:me\s+)?(?:escribió|envió|mandó|dijo)\s+(?:el\s+grupo\s+de\s+|la\s+|de\s+)?([^.,;!?]+)/i);
-
-if (matchLeer) {
-  const [, contacto] = matchLeer;
-  console.log(`📖 Detectado comando de lectura: "${contacto.trim()}"`);
-  
-  socket.emit('whatsapp:leer_mensajes', { contacto: contacto.trim() });
-  return; // Salir para NO llamar a Gemini
-}       
+        
+        // ✨ Refinar mensaje con estilo "secretaria"
+        const textoRefinado = await refinarMensajeParaEnviar(textoOriginal, destino.name || destino.pushname);
+        console.log(`✍️ Refinado: "${textoOriginal}" → "${textoRefinado}"`);
+        
+        await destino.sendMessage(textoRefinado);
+        
+        socket.emit('jarvis:respuesta', {
+          respuesta: `✅ Enviado a ${destino.name || destino.pushname}:\n"${textoRefinado}"`,
+          prioridad: 'media'
+        });
+      } catch (err) {
+        console.error('❌ Error enviando:', err);
+        socket.emit('jarvis:respuesta', { respuesta: '⚠️ Error al enviar.', prioridad: 'alta' });
+      }
+      return;
+    }
+    
+    // 🔍 3. DETECTAR LECTURA DE MENSAJES (flujo conversacional)
+    const matchLeer = mensaje.match(/(?:dime|qué|que|lee|leer|revisa|ver|muéstrame)\s+(?:qué|que)\s+(?:me\s+)?(?:escribió|envió|mandó|dijo|hay en|hay de)\s+(?:el\s+grupo\s+de\s+|la\s+|de\s+)?([^.,;!?]+)/i);
+    
+    if (matchLeer) {
+      const [, contactoRaw] = matchLeer;
+      const contacto = contactoRaw.trim();
+      console.log(`📖 Detectado lectura: "${contacto}"`);
+      
+      try {
+        if (!isWhatsAppReady()) { socket.emit('jarvis:respuesta', { respuesta: '⏳ WhatsApp inicializando...', prioridad: 'alta' }); return; }
+        
         const client = getClient();
         const chats = await client.getChats();
+        const chat = buscarContactoFuzzy(contacto, chats);
         
-        // Buscar contacto por nombre o número
-        const destino = chats.find(c => 
-          (c.name?.toLowerCase().includes(contacto.trim().toLowerCase())) || 
-          (c.pushname?.toLowerCase().includes(contacto.trim().toLowerCase())) ||
-          c.id._serialized.includes(contacto.trim())
-        );
-        
-        if (destino) {
-          await destino.sendMessage(texto.trim());
-          console.log(`✅ Mensaje enviado a ${destino.name || destino.pushname}`);
-          
+        if (!chat) {
+          const sugerencias = chats.slice(0, 5).map(c => c.name || c.pushname).filter(Boolean).join(', ');
           socket.emit('jarvis:respuesta', {
-            respuesta: `✅ Mensaje enviado exitosamente a ${destino.name || destino.pushname || contacto}`,
-            accion_sugerida: 'Esperar respuesta',
-            prioridad: 'media'
-          });
-        } else {
-          socket.emit('jarvis:respuesta', {
-            respuesta: `❌ No encontré "${contacto}" en tus chats. Verifica el nombre o usa el número completo.`,
-            accion_sugerida: 'Revisar lista de contactos',
+            respuesta: `❌ No encontré "${contacto}". Chats: ${sugerencias}`,
             prioridad: 'alta'
           });
+          return;
         }
-      } catch (err) {
-        console.error('❌ Error enviando WhatsApp:', err);
-        socket.emit('jarvis:respuesta', {
-          respuesta: '⚠️ Error al enviar el mensaje. Revisa la consola.',
-          accion_sugerida: 'Reintentar',
-          prioridad: 'alta'
+        
+        const messages = await chat.fetchMessages({ limit: 5 });
+        if (!messages || messages.length === 0) {
+          socket.emit('jarvis:respuesta', {
+            respuesta: `📭 No hay mensajes recientes de ${chat.name || chat.pushname}.`,
+            prioridad: 'baja'
+          });
+          return;
+        }
+        
+        // Guardar estado para flujo conversacional
+        estadoUsuario.set(userId, {
+          contexto: 'leyendo_mensajes',
+          contacto: chat.name || chat.pushname || contacto,
+          ultimoChat: chat,
+          mensajesLeidos: messages.map(m => m.id._serialized)
         });
+        
+        const ultimos = messages.slice(-3).map(m => {
+          const hora = new Date(m.timestamp * 1000).toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'});
+          const de = m.fromMe ? 'Tú' : (m.author?.split('@')[0] || chat.name?.split('@')[0] || 'Alguien');
+          return `• [${hora}] ${de}: ${m.body.substring(0, 120)}${m.body.length > 120 ? '...' : ''}`;
+        }).join('\n');
+        
+        socket.emit('jarvis:respuesta', {
+          respuesta: `💬 Últimos de ${chat.name || chat.pushname}:\n${ultimos}\n\n¿Hay más mensajes o quieres responder algo?`,
+          prioridad: 'media'
+        });
+      } catch (err) {
+        console.error('❌ Error leyendo mensajes:', err);
+        socket.emit('jarvis:respuesta', { respuesta: '⚠️ No pude leer los mensajes.', prioridad: 'alta' });
       }
-      return; // ⚠️ IMPORTANTE: Salir aquí para NO llamar a Gemini
+      return;
     }
     
-    // Si NO es comando de envío, usar Gemini normalmente
+    // 🔍 4. COMANDOS BÁSICOS DE WHATSAPP
+    if (/mis grupos|lista de grupos|chats recientes|estado whatsapp/i.test(mensaje)) {
+      try {
+        if (!isWhatsAppReady()) { socket.emit('jarvis:respuesta', { respuesta: '⏳ WhatsApp no listo', prioridad: 'alta' }); return; }
+        const client = getClient();
+        const chats = await client.getChats();
+        if (mensaje.toLowerCase().includes('grupos')) {
+          const grupos = chats.filter(c => c.isGroup).slice(0, 10);
+          socket.emit('jarvis:respuesta', { respuesta: grupos.length ? `📱 Grupos:\n${grupos.map(g=>`• ${g.name}`).join('\n')}` : '📭 Sin grupos', prioridad: 'media' });
+        } else {
+          const recientes = chats.filter(c => !c.isGroup).slice(0, 5);
+          socket.emit('jarvis:respuesta', { respuesta: recientes.length ? `💬 Chats:\n${recientes.map(c=>`• ${c.name||c.pushname}`).join('\n')}` : '📭 Sin chats', prioridad: 'media' });
+        }
+      } catch (e) { socket.emit('jarvis:respuesta', { respuesta: '⚠️ Error listando', prioridad: 'alta' }); }
+      return;
+    }
+    
+    // 🔍 5. SI NO ES COMANDO → GEMINI NORMAL
     const respuesta = await generarRespuestaSugerida(mensaje);
-    
     if (respuesta) {
-      await supabase.from('jarvis_memory').insert([{
-        content: mensaje,
-        category: 'chat',
-        metadata: { respuesta: respuesta.respuesta }
-      }]);
+      await supabase.from('jarvis_memory').insert([{ content: mensaje, category: 'chat', metadata: { respuesta: respuesta.respuesta } }]);
     }
-    
     socket.emit('jarvis:respuesta', respuesta);
   });
   
   // === AUDIO DE VOZ ===
-  socket.on('voice:audio', (audioBuffer) => {
-    sendAudioToVosk(audioBuffer);
-  });
+  socket.on('voice:audio', (audioBuffer) => sendAudioToVosk(audioBuffer));
   
   // === CREAR RECORDATORIO ===
   socket.on('jarvis:recordatorio', async (data) => {
     const { hora, mensaje } = data;
-    const cliente = getClient();
-    
-    crearRecordatorio({ hora, mensaje, cliente });
-    
-    socket.emit('jarvis:confirmacion', {
-      mensaje: `✅ Recordatorio creado para las ${hora}`
-    });
+    crearRecordatorio({ hora, mensaje, cliente: getClient() });
+    socket.emit('jarvis:confirmacion', { mensaje: `✅ Recordatorio para las ${hora}` });
   });
   
-  // === ✅ CONSULTAS WHATSAPP ===
+  // === CONSULTAS WHATSAPP BÁSICAS ===
   socket.on('whatsapp:consulta', async (data) => {
     const { comando } = data;
-    let respuesta = '';
-    let hablar = true;
-    
+    let respuesta = '', hablar = true;
     try {
-      if (!isWhatsAppReady()) {
-        respuesta = '⏳ WhatsApp aún se está inicializando... Escanea el QR en la terminal si es necesario.';
-        socket.emit('whatsapp:respuesta', { mensaje: respuesta, hablar });
-        return;
-      }
-      
+      if (!isWhatsAppReady()) { respuesta = '⏳ WhatsApp inicializando...'; socket.emit('whatsapp:respuesta', { mensaje: respuesta, hablar }); return; }
       const client = getClient();
-      
-      if (!client?.info?.wid) {
-        respuesta = '❌ WhatsApp no está conectado. Escanea el QR si es necesario.';
-      } else {
+      if (!client?.info?.wid) { respuesta = '❌ WhatsApp no conectado'; }
+      else {
         switch(comando.toLowerCase()) {
-          case 'estado':
-            respuesta = '✅ WhatsApp está conectado y funcionando correctamente.';
-            break;
-            
-          case 'grupos':
-          case 'mis grupos':
+          case 'estado': respuesta = '✅ WhatsApp conectado'; break;
+          case 'grupos': case 'mis grupos':
             const chats = await client.getChats();
-            const grupos = chats.filter(c => c.isGroup).slice(0, 10);
-            if (grupos.length > 0) {
-              const nombres = grupos.map(g => `• ${g.name}`).join('\n');
-              respuesta = `📱 Tus grupos (primeros 10):\n${nombres}`;
-            } else {
-              respuesta = '📭 No se encontraron grupos o aún no se han sincronizado.';
-            }
+            const grupos = chats.filter(c => c.isGroup).slice(0,10);
+            respuesta = grupos.length ? `📱 Grupos:\n${grupos.map(g=>`• ${g.name}`).join('\n')}` : '📭 Sin grupos';
             break;
-            
-          case 'chats':
-          case 'últimos chats':
-          case 'mis chats':
+          case 'chats': case 'últimos chats':
             const chats2 = await client.getChats();
-            const recientes = chats2.filter(c => !c.isGroup).slice(0, 5);
-            if (recientes.length > 0) {
-              const lista = recientes.map(c => `• ${c.name || c.pushname || 'Contacto'}`).join('\n');
-              respuesta = `💬 Últimos chats:\n${lista}`;
-            } else {
-              respuesta = '📭 No hay chats recientes disponibles.';
-            }
+            const recientes = chats2.filter(c => !c.isGroup).slice(0,5);
+            respuesta = recientes.length ? `💬 Chats:\n${recientes.map(c=>`• ${c.name||c.pushname}`).join('\n')}` : '📭 Sin chats';
             break;
-            
-          case 'mi número':
-          case 'mi whatsapp':
+          case 'mi número': case 'mi whatsapp':
             const info = client.info;
-            respuesta = `📱 Tu WhatsApp: ${info?.pushname || 'Usuario'}\nNúmero: ${info?.wid?.user || 'No disponible'}`;
+            respuesta = `📱 ${info?.pushname||'Usuario'} | ${info?.wid?.user||'N/A'}`;
             break;
-            
-          default:
-            respuesta = '❓ Comandos: "estado", "mis grupos", "últimos chats", "mi número"';
-            hablar = false;
+          default: respuesta = '❓ Comandos: "estado", "mis grupos", "últimos chats", "mi número"'; hablar=false;
         }
       }
-    } catch (err) {
-      console.error('❌ Error consultando WhatsApp:', err);
-      respuesta = '⚠️ Error al consultar WhatsApp. Revisa la consola.';
-    }
-    
+    } catch(err) { console.error('❌ Error WhatsApp:', err); respuesta = '⚠️ Error consultando WhatsApp'; }
     socket.emit('whatsapp:respuesta', { mensaje: respuesta, hablar });
-    // === 📱 LEER ÚLTIMOS MENSAJES DE UN CONTACTO/GRUPO ===
-socket.on('whatsapp:leer_mensajes', async (data) => {
-  const { contacto } = data;
-  
-  try {
-    if (!isWhatsAppReady()) {
-      socket.emit('jarvis:respuesta', {
-        respuesta: '⏳ WhatsApp no está listo aún.',
-        prioridad: 'alta'
-      });
-      return;
-    }
-    
-    const client = getClient();
-    const chats = await client.getChats();
-    
-    // Buscar contacto
-    const chat = chats.find(c => 
-      c.name?.toLowerCase().includes(contacto.toLowerCase()) ||
-      c.pushname?.toLowerCase().includes(contacto.toLowerCase()) ||
-      c.id._serialized.includes(contacto)
-    );
-    
-    if (!chat) {
-      socket.emit('jarvis:respuesta', {
-        respuesta: `❌ No encontré "${contacto}" en tus chats.`,
-        prioridad: 'alta'
-      });
-      return;
-    }
-    
-    // Obtener últimos mensajes
-    const messages = await chat.fetchMessages({ limit: 5 });
-    
-    if (messages.length === 0) {
-      socket.emit('jarvis:respuesta', {
-        respuesta: `📭 No hay mensajes recientes de ${chat.name || chat.pushname}.`,
-        prioridad: 'media'
-      });
-      return;
-    }
-    
-    // Formatear mensajes
-    const mensajesTexto = messages.map(m => {
-      const hora = m.timestamp.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-      const de = m.fromMe ? 'Tú' : (m.author || chat.name || chat.pushname);
-      return `• [${hora}] ${de}: ${m.body}`;
-    }).join('\n');
-    
-    socket.emit('jarvis:respuesta', {
-      respuesta: `📱 Últimos mensajes de ${chat.name || chat.pushname}:\n\n${mensajesTexto}`,
-      prioridad: 'media'
-    });
-    
-  } catch (err) {
-    console.error('❌ Error leyendo mensajes:', err);
-    socket.emit('jarvis:respuesta', {
-      respuesta: '⚠️ Error al leer los mensajes.',
-      prioridad: 'alta'
-    });
-  }
-});
   });
 });
 
@@ -365,6 +383,21 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Centro de Control Jarvis: http://localhost:${PORT}`);
   console.log(`🎤 Servicio de voz: ${voiceSocket ? 'Conectando...' : 'Iniciando...'}`);
+});
+
+// === 🩺 DIAGNÓSTICO EN TERMINAL ===
+process.stdin.resume();
+process.stdin.on('data', async (input) => {
+  const cmd = input.toString().trim().toLowerCase();
+  if (cmd === 'debug-whatsapp') {
+    console.log('\n🔍 === DIAGNÓSTICO WHATSAPP ===');
+    const { getClient, isWhatsAppReady } = await import('./services/whatsapp.js');
+    const client = getClient();
+    console.log('isWhatsAppReady():', isWhatsAppReady());
+    console.log('client?.info?.wid:', client?.info?.wid ? '✅' : '❌');
+    if (client?.info?.wid) console.log(`📱 ${client.info.wid.user} | 👤 ${client.info.pushname}`);
+    console.log('=============================\n');
+  }
 });
 
 export default app;
