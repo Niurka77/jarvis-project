@@ -216,7 +216,28 @@ io.on('connection', (socket) => {
     const estado = estadoUsuario.get(userId) || {};
     
     console.log(`💬 Mensaje recibido: "${mensaje}" | Estado: ${estado.contexto || 'ninguno'}`);
+    // 🔍 COMANDO PARA VERIFICAR ESTADO DE GEMINI
+if (/estado gemini|gemini status|api status|verificar ia/i.test(mensaje)) {
+  try {
+    const { model } = await import('../config/gemini.js');
     
+    // Hacer una prueba rápida
+    const testPrompt = "Responde solo OK";
+    const result = await model.generateContent(testPrompt);
+    const response = await result.response;
+    
+    socket.emit('jarvis:respuesta', {
+      respuesta: '✅ Gemini API está funcionando correctamente.',
+      prioridad: 'baja'
+    });
+  } catch (err) {
+    socket.emit('jarvis:respuesta', {
+      respuesta: `⚠️ Gemini API tiene problemas: ${err.message}. Es probable que sea saturación temporal. Intenta de nuevo en 5-10 minutos.`,
+      prioridad: 'alta'
+    });
+  }
+  return;
+}
     // 🔍 1. ¿El usuario pregunta si hay MÁS mensajes?
     if (estado.contexto === 'leyendo_mensajes' && /hay más|otros|hay otros|algo más|más mensajes/i.test(mensaje)) {
       console.log(`🔄 Continuando lectura de ${estado.contacto}`);
