@@ -67,7 +67,43 @@ socket.on('voice:resultado', (data) => {
     }
   }, 300);
 });
+// === 🔔 NOTIFICACIONES INTELIGENTES (con debounce visual) ===
+let ultimaNotificacionVisual = null;
 
+socket.on('jarvis:notificacion_tiempo_real', (data) => {
+  if (data.tipo === 'nuevo_mensaje') {
+    const ahora = Date.now();
+    
+    // Evitar notificación visual repetida del mismo chat en <10 segundos
+    if (ultimaNotificacionVisual?.chatId === data.chatId && 
+        (ahora - ultimaNotificacionVisual.timestamp) < 10000) {
+      console.log(`🔄 Actualizando notificación de ${data.de}`);
+      return;
+    }
+    
+    ultimaNotificacionVisual = { chatId: data.chatId, timestamp: ahora };
+    
+    // Sonido suave (solo primera vez)
+    if (!ultimaNotificacionVisual.sonidoReproducido) {
+      const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
+      audio.play().catch(() => {});
+      ultimaNotificacionVisual.sonidoReproducido = true;
+    }
+    
+    // Notificación visual
+    const emoji = data.es_grupo ? '👥' : '💬';
+    const texto = data.count > 1 ? `(${data.count} mensajes)` : '';
+    agregarMensaje(`${emoji} ${data.de} ${texto}: ${data.preview}`, 'jarvis');
+    
+    // Notificación del sistema
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(`Mensaje${data.count > 1 ? 's' : ''} de ${data.de}`, {
+        body: data.preview,
+        icon: '/jarvis-icon.png'
+      });
+    }
+  }
+});
 // ✅ Escuchar respuestas de WhatsApp
 socket.on('whatsapp:respuesta', (data) => {
   if (data?.mensaje) {
