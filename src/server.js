@@ -282,63 +282,118 @@ io.on('connection', (socket) => {
       return;
     }
     
-    // 🔍 3. DETECTAR LECTURA DE MENSAJES (flujo conversacional)
-    const matchLeer = mensaje.match(/(?:dime|qué|que|lee|leer|revisa|ver|muéstrame)\s+(?:qué|que)\s+(?:me\s+)?(?:escribió|envió|mandó|dijo|hay en|hay de)\s+(?:el\s+grupo\s+de\s+|la\s+|de\s+)?([^.,;!?]+)/i);
+// 🔍 3. DETECTAR LECTURA DE MENSAJES (CON FIX PARA waitForChatLoading)
+const matchLeer = mensaje.match(/(?:dime|qué|que|lee|leer|revisa|ver|muéstrame)\s+(?:qué|que)\s+(?:me\s+)?(?:escribió|envió|mandó|dijo|hay en|hay de)\s+(?:el\s+grupo\s+de\s+|la\s+|de\s+)?([^.,;!?]+)/i);
+
+if (matchLeer) {
+  const [, contactoRaw] = matchLeer;
+  const contacto = contactoRaw.trim();
+  console.log(`📖 Detectado lectura: "${contacto}"`);
+  
+  try {
+    if (!isWhatsAppReady()) { 
+      socket.emit('jarvis:respuesta', { respuesta: '⏳ WhatsApp inicializando...', prioridad: 'alta' }); 
+      return; 
+    }
     
-    if (matchLeer) {
-      const [, contactoRaw] = matchLeer;
-      const contacto = contactoRaw.trim();
-      console.log(`📖 Detectado lectura: "${contacto}"`);
+    const client = getClient();
+    const chats = await client.getChats();
+    
+    // 🔍 Buscar en TODOS los chats (no solo los primeros 10)
+    const chat = buscarContactoFuzzy(contacto, chats);
+    
+    if (!chat) {
+      // Si no encontró, buscar en TODOS los chats sin normalizar
+      const busquedaDirecta = chats.find(c => 
+        (c.name?.toLowerCase().includes(contacto.toLowerCase())) ||
+        (c.pushname?.toLowerCase().includes(contacto.toLowerCase())) ||
+        c.id._serialized.includes(contacto)
+      );
       
-      try {
-        if (!isWhatsAppReady()) { socket.emit('jarvis:respuesta', { respuesta: '⏳ WhatsApp inicializando...', prioridad: 'alta' }); return; }
-        
-        const client = getClient();
-        const chats = await client.getChats();
-        const chat = buscarContactoFuzzy(contacto, chats);
-        
-        if (!chat) {
-          const sugerencias = chats.slice(0, 5).map(c => c.name || c.pushname).filter(Boolean).join(', ');
-          socket.emit('jarvis:respuesta', {
-            respuesta: `❌ No encontré "${contacto}". Chats: ${sugerencias}`,
-            prioridad: 'alta'
-          });
-          return;
-        }
-        
-        const messages = await chat.fetchMessages({ limit: 5 });
-        if (!messages || messages.length === 0) {
-          socket.emit('jarvis:respuesta', {
-            respuesta: `📭 No hay mensajes recientes de ${chat.name || chat.pushname}.`,
-            prioridad: 'baja'
-          });
-          return;
-        }
-        
-        // Guardar estado para flujo conversacional
-        estadoUsuario.set(userId, {
-          contexto: 'leyendo_mensajes',
-          contacto: chat.name || chat.pushname || contacto,
-          ultimoChat: chat,
-          mensajesLeidos: messages.map(m => m.id._serialized)
-        });
-        
-        const ultimos = messages.slice(-3).map(m => {
-          const hora = new Date(m.timestamp * 1000).toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'});
-          const de = m.fromMe ? 'Tú' : (m.author?.split('@')[0] || chat.name?.split('@')[0] || 'Alguien');
-          return `• [${hora}] ${de}: ${m.body.substring(0, 120)}${m.body.length > 120 ? '...' : ''}`;
-        }).join('\n');
-        
+      if (!busquedaDirecta) {
+        const sugerencias = chats.slice(0, 10).map(c => c.name || c.pushname).filter(Boolean).join(', ');
         socket.emit('jarvis:respuesta', {
-          respuesta: `💬 Últimos de ${chat.name || chat.pushname}:\n${ultimos}\n\n¿Hay más mensajes o quieres responder algo?`,
-          prioridad: 'media'
+          respuesta: `❌ No encontré "${contacto}". Chats disponibles: ${sugerencias}`,
+          prioridad: 'alta'
         });
-      } catch (err) {
-        console.error('❌ Error leyendo mensajes:', err);
-        socket.emit('jarvis:respuesta', { respuesta: '⚠️ No pude leer los mensajes.', prioridad: 'alta' });
+        return;
       }
+    }
+    
+    const chatEncontrado = chat || busquedaDirecta;
+    console.log(`✅ Chat encontrado: ${chatEncontrado.name || chatEncontrado.pushname}`);
+    
+    // 🔄 FIX: Intentar fetchMessages con reintentos
+    let messages = [];
+    let intentos = 0;
+    const maxIntentos = 3;
+    
+    while (intentos < maxIntentos && messages.length === 0) {
+      try {
+        intentos++;
+        console.log(`🔄 Intento ${intentos}/${maxIntentos} de leer mensajes...`);
+        
+        // Forzar recarga del chat obteniéndolo nuevamente
+        const chatsActualizados = await client.getChats();
+        const chatRefrescado = chatsActualizados.find(c => c.id._serialized === chatEncontrado.id._serialized);
+        
+        if (!chatRefrescado) {
+          throw new Error('Chat no encontrado después de refrescar');
+        }
+        
+        messages = await chatRefrescado.fetchMessages({ limit: 10 });
+        
+        // Si no hay mensajes, esperar un poco y reintentar
+        if (messages.length === 0 && intentos < maxIntentos) {
+          console.log('⏳ No hay mensajes aún, esperando 2s...');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+      } catch (err) {
+        console.warn(`⚠️ Intento ${intentos} falló:`, err.message);
+        if (intentos < maxIntentos) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+    }
+    
+    if (!messages || messages.length === 0) {
+      socket.emit('jarvis:respuesta', {
+        respuesta: `📭 No hay mensajes recientes de ${chatEncontrado.name || chatEncontrado.pushname}. Quizás el chat no se ha abierto recientemente.`,
+        prioridad: 'baja'
+      });
       return;
     }
+    
+    // Guardar estado para flujo conversacional
+    estadoUsuario.set(userId, {
+      contexto: 'leyendo_mensajes',
+      contacto: chatEncontrado.name || chatEncontrado.pushname || contacto,
+      ultimoChat: chatEncontrado,
+      mensajesLeidos: messages.map(m => m.id._serialized)
+    });
+    
+    const ultimos = messages.slice(-5).map(m => {
+      const fecha = new Date(m.timestamp * 1000);
+      const hora = fecha.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'});
+      const de = m.fromMe ? 'Tú' : (m.author?.split('@')[0] || chatEncontrado.name?.split('@')[0] || 'Alguien');
+      return `• [${hora}] ${de}: ${m.body.substring(0, 150)}${m.body.length > 150 ? '...' : ''}`;
+    }).join('\n');
+    
+    socket.emit('jarvis:respuesta', {
+      respuesta: `💬 Últimos de ${chatEncontrado.name || chatEncontrado.pushname}:\n${ultimos}\n\n¿Hay más mensajes o quieres responder algo?`,
+      prioridad: 'media'
+    });
+    
+  } catch (err) {
+    console.error('❌ Error leyendo mensajes:', err);
+    socket.emit('jarvis:respuesta', { 
+      respuesta: `⚠️ No pude leer los mensajes. Error: ${err.message}. Intenta abrir el chat en WhatsApp Web primero.`, 
+      prioridad: 'alta' 
+    });
+  }
+  return;
+}
     
     // 🔍 4. COMANDOS BÁSICOS DE WHATSAPP
     if (/mis grupos|lista de grupos|chats recientes|estado whatsapp/i.test(mensaje)) {
