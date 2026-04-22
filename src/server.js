@@ -156,7 +156,41 @@ io.on('connection', (socket) => {
   // === 🛠️ COMANDOS DE DEBUG ===
   socket.on('debug:whatsapp', () => import('./debug.js').then(({ debugWhatsApp }) => debugWhatsApp()));
   socket.on('debug:chats', () => import('./debug.js').then(({ debugChats }) => debugChats()));
-
+  // === 🔍 DEBUG: VER CONTACTOS NORMALIZADOS ===
+  socket.on('debug:contactos', async () => {
+    try {
+      if (!isWhatsAppReady()) {
+        socket.emit('jarvis:respuesta', { respuesta: '⏳ WhatsApp no listo', prioridad: 'alta' });
+        return;
+      }
+      const client = getClient();
+      const chats = await client.getChats();
+      
+      // Buscar específicamente Dayna y Kaili para debug
+      const buscados = ['dayna', 'kaili', 'jamila', 'seli'];
+      const resultados = buscados.map(busqueda => {
+        const encontrado = chats.find(c => 
+          normalizarTexto(c.name)?.includes(busqueda) || 
+          normalizarTexto(c.pushname)?.includes(busqueda)
+        );
+        return `${busqueda}: ${encontrado ? `✅ "${encontrado.name || encontrado.pushname}"` : '❌ No encontrado'}`;
+      }).join('\n');
+      
+      // Lista de primeros 10 chats normalizados
+      const lista = chats.slice(0, 10).map(c => {
+        const original = c.name || c.pushname || 'Sin nombre';
+        return `• "${original}" → "${normalizarTexto(original)}"`;
+      }).join('\n');
+      
+      socket.emit('jarvis:respuesta', { 
+        respuesta: `🔍 Búsqueda específica:\n${resultados}\n\n📋 Primeros chats:\n${lista}`, 
+        prioridad: 'baja' 
+      });
+    } catch (err) {
+      console.error('❌ Error debug contactos:', err);
+      socket.emit('jarvis:respuesta', { respuesta: '⚠️ Error en debug', prioridad: 'alta' });
+    }
+  });
   // === 🎯 MENSAJES DE TEXTO - CON DETECCIÓN INTELIGENTE ===
   socket.on('jarvis:mensaje', async (data) => {
     const { mensaje } = data;
@@ -201,10 +235,9 @@ io.on('connection', (socket) => {
       return;
     }
     
-    // 🔍 2. DETECTAR ENVÍO DE MENSAJE (regex flexible para lenguaje natural)
-    const matchEnvio = mensaje.match(
-      /(?:enviar|manda|escribe|envíale|manda un mensaje|escribir|dile|avísale|dile algo a)\s+(?:a\s+|al\s+|a la\s+)?([^:;,]+?)\s*(?:[:;,]|de|que|para)\s*(.+)/i
-    );
+   const matchEnvio = mensaje.match(
+  /(?:enviar|manda|escribe|envíale|manda un mensaje|escribir|dile|avísale|dile algo a)\s+(?:a\s+|al\s+|a la\s+)?([^:;,]+?)\s*(?:[:;,]|de|que|para|k|xq|pa|por\s+que)\s+(.+)/i
+);
     
     if (matchEnvio) {
       const [, contactoRaw, textoRaw] = matchEnvio;

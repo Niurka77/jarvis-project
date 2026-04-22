@@ -79,7 +79,9 @@
       <p class="overlay-hint">(Necesario para activar el micrófono y la voz)</p>
     </div>
   </div>
-
+<button onclick="socket.emit('debug:contactos')" style="position:fixed;bottom:10px;right:10px;z-index:999;">
+  🔍 Debug Contactos
+</button>
   <script src="/socket.io/socket.io.js"></script>
   <script src="client.js"></script>
 </body>
