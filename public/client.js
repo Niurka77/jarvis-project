@@ -10,28 +10,48 @@ const SAMPLE_RATE = 16000;
 // Referencias al DOM
 const messageInput = document.getElementById('message-input');
 const voiceBtn = document.getElementById('voice-btn');
-const statusDiv = document.getElementById('status'); // ✅ Corregido: 'status' no 'status-div'
+const statusDiv = document.getElementById('status');
 
 // Socket.IO
 const socket = io();
 
+// === 🔔 NOTIFICACIONES INTELIGENTES (con debounce visual) - SOLO UN LISTENER ===
+let ultimaNotificacionVisual = null;
+
 socket.on('connect', () => {
   console.log('✅ Conectado al servidor Jarvis');
 });
-// === 🔔 NOTIFICACIONES EN TIEMPO REAL ===
+
+// === 🔔 NOTIFICACIONES EN TIEMPO REAL (UN SOLO LISTENER) ===
 socket.on('jarvis:notificacion_tiempo_real', (data) => {
   if (data.tipo === 'nuevo_mensaje') {
-    // Sonido de notificación
+    const ahora = Date.now();
+    
+    // Evitar notificación visual repetida del mismo chat en <10 segundos
+    if (ultimaNotificacionVisual?.chatId === data.chatId && 
+        (ahora - ultimaNotificacionVisual.timestamp) < 10000) {
+      console.log(`🔄 Actualizando notificación de ${data.de}`);
+      return;
+    }
+    
+    ultimaNotificacionVisual = { 
+      chatId: data.chatId, 
+      timestamp: ahora,
+      sonidoReproducido: true
+    };
+    
+    // Sonido suave (solo primera vez)
     const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
     audio.play().catch(() => {});
     
-    // Notificación visual en el chat
+    // Notificación visual
     const emoji = data.es_grupo ? '👥' : '💬';
-    agregarMensaje(`${emoji} ${data.de}: ${data.preview}`, 'jarvis');
+    const texto = data.count > 1 ? `(${data.count} mensajes)` : '';
+    agregarMensaje(`${emoji} ${data.de} ${texto}: ${data.preview}`, 'jarvis');
     
     // Notificación del sistema
     if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(`Mensaje de ${data.de}`, {
+      new Notification(`Mensaje${data.count > 1 ? 's' : ''} de ${data.de}`, {
         body: data.preview,
         icon: '/jarvis-icon.png'
       });
@@ -39,10 +59,6 @@ socket.on('jarvis:notificacion_tiempo_real', (data) => {
   }
 });
 
-// Solicitar permiso para notificaciones del navegador
-if ('Notification' in window && Notification.permission === 'default') {
-  Notification.requestPermission();
-}
 // Escuchar respuestas de Jarvis
 socket.on('jarvis:respuesta', (data) => {
   if (data?.respuesta) {
@@ -67,43 +83,7 @@ socket.on('voice:resultado', (data) => {
     }
   }, 300);
 });
-// === 🔔 NOTIFICACIONES INTELIGENTES (con debounce visual) ===
-let ultimaNotificacionVisual = null;
 
-socket.on('jarvis:notificacion_tiempo_real', (data) => {
-  if (data.tipo === 'nuevo_mensaje') {
-    const ahora = Date.now();
-    
-    // Evitar notificación visual repetida del mismo chat en <10 segundos
-    if (ultimaNotificacionVisual?.chatId === data.chatId && 
-        (ahora - ultimaNotificacionVisual.timestamp) < 10000) {
-      console.log(`🔄 Actualizando notificación de ${data.de}`);
-      return;
-    }
-    
-    ultimaNotificacionVisual = { chatId: data.chatId, timestamp: ahora };
-    
-    // Sonido suave (solo primera vez)
-    if (!ultimaNotificacionVisual.sonidoReproducido) {
-      const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
-      audio.play().catch(() => {});
-      ultimaNotificacionVisual.sonidoReproducido = true;
-    }
-    
-    // Notificación visual
-    const emoji = data.es_grupo ? '👥' : '💬';
-    const texto = data.count > 1 ? `(${data.count} mensajes)` : '';
-    agregarMensaje(`${emoji} ${data.de} ${texto}: ${data.preview}`, 'jarvis');
-    
-    // Notificación del sistema
-    if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(`Mensaje${data.count > 1 ? 's' : ''} de ${data.de}`, {
-        body: data.preview,
-        icon: '/jarvis-icon.png'
-      });
-    }
-  }
-});
 // ✅ Escuchar respuestas de WhatsApp
 socket.on('whatsapp:respuesta', (data) => {
   if (data?.mensaje) {
@@ -223,7 +203,7 @@ function toggleListening() {
   }
 }
 
-// ✅ CREAR RECORDATORIO (función que faltaba)
+// ✅ CREAR RECORDATORIO
 function crearRecordatorio() {
   const hora = document.getElementById('hora-recordatorio')?.value;
   const texto = document.getElementById('texto-recordatorio')?.value;
@@ -253,7 +233,7 @@ function agregarMensaje(texto, tipo) {
   if (!chatMessages) return;
   
   const mensajeDiv = document.createElement('div');
-  mensajeDiv.classList.add('message', tipo); // ✅ Corregido: 'message' no 'mensaje'
+  mensajeDiv.classList.add('message', tipo);
   
   const hora = new Date().toLocaleTimeString('es-ES', { 
     hour: '2-digit', 
@@ -300,7 +280,7 @@ function speakText(text) {
   }
 }
 
-// 🎤 Fallback con Web Speech API (más preciso para español)
+// 🎤 Fallback con Web Speech API
 async function recognizeWithWebSpeech() {
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
     return null;
@@ -321,6 +301,7 @@ async function recognizeWithWebSpeech() {
     recognition.start();
   });
 }
+
 // Función INICIAR JARVIS
 async function iniciarJarvis() {
   console.log('🚀 Iniciando Jarvis...');
@@ -361,3 +342,8 @@ document.addEventListener('keydown', (e) => {
     toggleListening();
   }
 });
+
+// Solicitar permiso para notificaciones del navegador
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
