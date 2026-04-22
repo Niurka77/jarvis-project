@@ -18,7 +18,31 @@ const socket = io();
 socket.on('connect', () => {
   console.log('✅ Conectado al servidor Jarvis');
 });
+// === 🔔 NOTIFICACIONES EN TIEMPO REAL ===
+socket.on('jarvis:notificacion_tiempo_real', (data) => {
+  if (data.tipo === 'nuevo_mensaje') {
+    // Sonido de notificación
+    const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE');
+    audio.play().catch(() => {});
+    
+    // Notificación visual en el chat
+    const emoji = data.es_grupo ? '👥' : '💬';
+    agregarMensaje(`${emoji} ${data.de}: ${data.preview}`, 'jarvis');
+    
+    // Notificación del sistema
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(`Mensaje de ${data.de}`, {
+        body: data.preview,
+        icon: '/jarvis-icon.png'
+      });
+    }
+  }
+});
 
+// Solicitar permiso para notificaciones del navegador
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
 // Escuchar respuestas de Jarvis
 socket.on('jarvis:respuesta', (data) => {
   if (data?.respuesta) {
