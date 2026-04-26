@@ -10,7 +10,27 @@ let io;
 
 // === 📬 MONITOREO DE MENSAJES EN TIEMPO REAL ===
 const chatsConNuevosMensajes = new Map();
-const notificacionesRecientes = new Map(); // ✅ MOVIDO AQUÍ (fuera de la función)
+const notificacionesRecientes = new Map();
+
+// === 🧠 MEMORIA GLOBAL: Último remitente (para respuestas contextuales) ===
+export let ultimoRemitenteGlobal = null;
+
+export function setUltimoRemitente(chat) {
+  ultimoRemitenteGlobal = {
+    chatId: chat.id._serialized,
+    nombre: chat.name || chat.pushname || 'Contacto',
+    chat: chat
+  };
+  console.log(`🧠 Memorizado último remitente: ${ultimoRemitenteGlobal.nombre}`);
+}
+
+export function getUltimoRemitente() {
+  return ultimoRemitenteGlobal;
+}
+
+export function clearUltimoRemitente() {
+  ultimoRemitenteGlobal = null;
+}
 
 export function inicializarWhatsApp(socketIO) {
   io = socketIO;
@@ -34,7 +54,7 @@ export function inicializarWhatsApp(socketIO) {
     if (io) io.emit('whatsapp:ready', true);
   });
 
-  // === 🎯 LISTENER DE MENSAJES EN TIEMPO REAL - VERSIÓN ROBUSTA ===
+  // === 🎯 LISTENER DE MENSAJES EN TIEMPO REAL ===
   client.on('message', async (message) => {
     if (message.fromMe || message.from === 'status@broadcast') return;
     
@@ -54,21 +74,25 @@ export function inicializarWhatsApp(socketIO) {
         throw chatErr;
       }
       
+      // 🧠 ACTUALIZAR MEMORIA DE ÚLTIMO REMITENTE
+      if (!esGrupo) {
+        setUltimoRemitente(chat);
+      }
+      
       const nombreChat = chat.name || chat.pushname || (esGrupo ? 'un grupo' : 'alguien');
       const remitente = esGrupo ? (message.author?.split('@')[0] || 'Alguien') : nombreChat;
       
       // 🔄 DEBOUNCE: Agrupar mensajes del mismo contacto en ventana de 30 segundos
       const ahora = Date.now();
-      const ventanaDebounce = 30 * 1000; // 30 segundos
+      const ventanaDebounce = 30 * 1000;
       const ultimaNotif = notificacionesRecientes.get(chatId);
       
       if (ultimaNotif && (ahora - ultimaNotif.timestamp) < ventanaDebounce) {
-        // Actualizar contador sin notificar
         ultimaNotif.count++;
         ultimaNotif.ultimoMensaje = message.body;
         ultimaNotif.timestamp = ahora;
         console.log(`📦 Agrupando mensaje de ${nombreChat} (debounce)`);
-        return; // No notificar aún
+        return;
       }
       
       // Guardar/actualizar en el mapa de mensajes pendientes
@@ -93,13 +117,11 @@ export function inicializarWhatsApp(socketIO) {
       
       chatsConNuevosMensajes.set(chatId, estadoActual);
       
-      // Actualizar debounce
       notificacionesRecientes.set(chatId, { 
         count: estadoActual.count, 
         timestamp: ahora 
       });
       
-      // Limpiar debounce map si hay muchos
       if (notificacionesRecientes.size > 50) {
         const oldest = Array.from(notificacionesRecientes.entries())
           .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
@@ -124,7 +146,7 @@ export function inicializarWhatsApp(socketIO) {
           timestamp: message.timestamp
         });
         
-        // Si es mensaje privado (no grupo), notificar inmediatamente
+        // Si es mensaje privado, notificar inmediatamente
         if (!esGrupo) {
           io.emit('jarvis:respuesta', {
             respuesta: `🔔 Tienes un mensaje nuevo de *${nombreChat}*:\n\n"${preview}"\n\n¿Quieres que te lea todos los mensajes de ${nombreChat} o que responda algo?`,
@@ -137,7 +159,6 @@ export function inicializarWhatsApp(socketIO) {
       // Analizar si es importante (solo para grupos)
       if (esGrupo) {
         const analisis = await analizarMensajeGrupo(message.body);
-        
         if (analisis.es_importante) {
           console.log(`🔔 MENSAJE IMPORTANTE: ${analisis.razon}`);
           if (io) {
@@ -152,7 +173,6 @@ export function inicializarWhatsApp(socketIO) {
       }
       
     } catch (err) {
-      // Ignorar errores de Canales, mostrar otros
       if (!err.message?.includes('description')) {
         console.error('❌ Error procesando mensaje entrante:', err);
       }
@@ -181,7 +201,6 @@ export function obtenerMensajesPendientes() {
     mensajes: data.mensajes
   }));
   
-  // 🧹 Limpiar mensajes antiguos (más de 10 minutos) - usando Array para evitar modificación durante iteración
   const ahora = Date.now();
   const chatsParaEliminar = [];
   
@@ -200,26 +219,28 @@ export function obtenerMensajesPendientes() {
 
 export function limpiarMensajesLeidos(chatId) {
   chatsConNuevosMensajes.delete(chatId);
+  // Si el chat limpiado era el último remitente, limpiar memoria
+  if (ultimoRemitenteGlobal?.chatId === chatId) {
+    clearUltimoRemitente();
+  }
 }
 
 export function getMensajePendiente(chatId) {
   return chatsConNuevosMensajes.get(chatId);
 }
 
-// ✅ VERSIÓN SIMPLIFICADA Y FUNCIONAL
 export function isWhatsAppReady() {
   return client?.info?.wid !== undefined;
 }
 
-// ✅ Función para obtener el cliente
 export function getClient() {
   return client;
 }
 
-// === 🧹 LIMPIEZA AUTOMÁTICA DE DEBOUNCE (cada 1 minuto) ===
+// === 🧹 LIMPIEZA AUTOMÁTICA DE DEBOUNCE ===
 setInterval(() => {
   const ahora = Date.now();
-  const ventana = 60 * 1000; // 1 minuto
+  const ventana = 60 * 1000;
   
   for (const [chatId, data] of notificacionesRecientes.entries()) {
     if (ahora - data.timestamp > ventana) {
