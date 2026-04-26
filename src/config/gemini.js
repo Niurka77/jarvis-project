@@ -3,7 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ✅ Modelo estable + configuración compatible
+// ✅ Modelo latest (el que te funciona) + configuración compatible
 export const model = genAI.getGenerativeModel({ 
   model: "gemini-flash-latest",
   generationConfig: {

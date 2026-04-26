@@ -9,6 +9,7 @@ import { inicializarWhatsApp, getClient, isWhatsAppReady, obtenerMensajesPendien
 import { generarRespuestaSugerida } from './services/ai.js';
 import { crearRecordatorio } from './services/scheduler.js';
 import { supabase } from './config/supabase.js';
+import { model as geminiModel } from './config/gemini.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocket } from 'ws';
@@ -31,6 +32,9 @@ const estadoUsuario = new Map();
 // === VARIABLES DE VOSK ===
 let voiceSocket = null;
 const VOSK_WS_URL = 'ws://localhost:5001';
+
+// === 🔄 INICIALIZAR CONTADOR DE RECONEXIONES VOSK ===
+global.reconexionesVosk = 0;
 
 // === 🧰 FUNCIONES AUXILIARES ===
 
@@ -85,8 +89,7 @@ Para: ${contextoContacto || 'contacto de WhatsApp'}
 
 Responde SOLO con el mensaje refinado.`;
 
-    const { model } = await import('../config/gemini.js');
-    const result = await model.generateContent(prompt);
+    const result = await geminiModel.generateContent(prompt);
     return (await result.response).text().trim();
   } catch (e) {
     console.warn('⚠️ No se pudo refinar mensaje');
@@ -101,7 +104,7 @@ async function leerMensajesDeChat(chat, limite = 10) {
     const messages = await chat.fetchMessages({ limit });
     if (messages.length > 0) return messages;
     
-    // Intento 2: Usar último mensaje conocido
+    // Intento 2: Usando último mensaje conocido
     if (chat.lastMessage) {
       console.log('📦 Usando último mensaje conocido');
       return [chat.lastMessage];
@@ -128,11 +131,18 @@ async function leerMensajesDeChat(chat, limite = 10) {
 
 // === FUNCIÓN PARA CONECTAR AL SERVICIO DE VOZ ===
 function connectToVoiceService() {
+  // Limitar reconexiones
+  if (global.reconexionesVosk >= 5) {
+    console.error('❌ Máximo de reconexiones a Vosk alcanzado. Deteniendo intentos.');
+    return;
+  }
+  
   try {
     voiceSocket = new WebSocket(VOSK_WS_URL);
     
     voiceSocket.on('open', () => {
       console.log('✅ Conectado al servicio de voz Vosk');
+      global.reconexionesVosk = 0; // Resetear contador al conectar
       voiceSocket.send(JSON.stringify({ type: 'config', sampleRate: 16000 }));
     });
 
@@ -151,7 +161,12 @@ function connectToVoiceService() {
           
           const respuesta = await generarRespuestaSugerida(textoReconocido);
           if (respuesta) {
-            await supabase.from('jarvis_memory').insert([{ content: textoReconocido, category: 'voice', metadata: { respuesta: respuesta.respuesta } }]);
+            const { error: errorMemoria } = await supabase
+              .from('jarvis_memory')
+              .insert([{ content: textoReconocido, category: 'voice', metadata: { respuesta: respuesta.respuesta } }]);
+            if (errorMemoria) {
+              console.warn('⚠️ No se pudo guardar en memoria (voz):', errorMemoria.message);
+            }
           }
           
           jarvisEstaHablando = true;
@@ -162,7 +177,12 @@ function connectToVoiceService() {
     });
     
     voiceSocket.on('error', (err) => console.error('❌ Error Vosk:', err.message));
-    voiceSocket.on('close', () => setTimeout(connectToVoiceService, 5000));
+    voiceSocket.on('close', () => {
+      global.reconexionesVosk = (global.reconexionesVosk || 0) + 1;
+      const delay = Math.min(5000 * global.reconexionesVosk, 30000); // Máx 30s
+      console.log(`🔄 Reintentando Vosk en ${delay/1000}s (intento ${global.reconexionesVosk}/5)`);
+      setTimeout(connectToVoiceService, delay);
+    });
   } catch (err) { console.error('❌ No se pudo conectar a Vosk:', err); }
 }
 
@@ -212,6 +232,17 @@ io.on('connection', (socket) => {
   // === 🎯 MENSAJES DE TEXTO - CON DETECCIÓN INTELIGENTE ===
   socket.on('jarvis:mensaje', async (data) => {
     const { mensaje } = data;
+    
+    // 🛡️ Validación de entrada
+    if (!mensaje || typeof mensaje !== 'string' || mensaje.trim() === '') {
+      console.warn('⚠️ Mensaje inválido recibido');
+      socket.emit('jarvis:respuesta', { 
+        respuesta: '❌ El mensaje está vacío o es inválido.', 
+        prioridad: 'baja' 
+      });
+      return;
+    }
+    
     const userId = socket.id;
     const estado = estadoUsuario.get(userId) || {};
     
@@ -440,7 +471,12 @@ if (/estado gemini|gemini status|api status|verificar ia/i.test(mensaje)) {
     // 🔍 6. SI NO ES COMANDO → GEMINI NORMAL
     const respuesta = await generarRespuestaSugerida(mensaje);
     if (respuesta) {
-      await supabase.from('jarvis_memory').insert([{ content: mensaje, category: 'chat', metadata: { respuesta: respuesta.respuesta } }]);
+      const { error: errorMemoria } = await supabase
+        .from('jarvis_memory')
+        .insert([{ content: mensaje, category: 'chat', metadata: { respuesta: respuesta.respuesta } }]);
+      if (errorMemoria) {
+        console.warn('⚠️ No se pudo guardar en memoria (chat):', errorMemoria.message);
+      }
     }
     socket.emit('jarvis:respuesta', respuesta);
   });
@@ -495,6 +531,12 @@ if (/estado gemini|gemini status|api status|verificar ia/i.test(mensaje)) {
       respuesta = '⚠️ Error consultando WhatsApp'; 
     }
     socket.emit('whatsapp:respuesta', { mensaje: respuesta, hablar });
+  });
+  
+  // === 🧹 LIMPIAR ESTADO CUANDO EL CLIENTE SE DESCONECTA ===
+  socket.on('disconnect', () => {
+    estadoUsuario.delete(socket.id);
+    console.log(`🧹 Estado limpiado para socket: ${socket.id}`);
   });
 });
 

@@ -46,7 +46,13 @@ Contexto: ${contexto}`;
         timestamp: Date.now()
       });
       
-      // 🧹 Limpiar caché antiguo
+      // 🧹 Limpieza inteligente de caché: eliminar entradas expiradas primero
+      for (const [key, value] of geminiCache.entries()) {
+        if (Date.now() - value.timestamp > CACHE_TTL) {
+          geminiCache.delete(key);
+        }
+      }
+      // Si aún está muy lleno, remover el más antiguo
       if (geminiCache.size > 50) {
         const oldestKey = geminiCache.keys().next().value;
         geminiCache.delete(oldestKey);

@@ -181,12 +181,18 @@ export function obtenerMensajesPendientes() {
     mensajes: data.mensajes
   }));
   
-  // Limpiar mensajes antiguos (más de 10 minutos)
+  // 🧹 Limpiar mensajes antiguos (más de 10 minutos) - usando Array para evitar modificación durante iteración
   const ahora = Date.now();
+  const chatsParaEliminar = [];
+  
   for (const [chatId, data] of chatsConNuevosMensajes.entries()) {
     if (ahora - data.timestamp > 10 * 60 * 1000) {
-      chatsConNuevosMensajes.delete(chatId);
+      chatsParaEliminar.push(chatId);
     }
+  }
+  
+  for (const chatId of chatsParaEliminar) {
+    chatsConNuevosMensajes.delete(chatId);
   }
   
   return pendientes;
